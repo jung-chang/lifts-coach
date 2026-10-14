@@ -65,7 +65,16 @@ pnpm exec wrangler secret put ANTHROPIC_API_KEY --config wrangler.deploy.json
 
 Settings lists providers only when their Worker secret exists. Models default to `gpt-5-mini,gpt-4.1-mini` and `claude-sonnet-4-5`; override allowed lists using `OPENAI_MODELS` / `ANTHROPIC_MODELS` Worker variables when your provider account supports other models. The UI never requests, stores, or exports an API key.
 
-Add GitHub repository/production environment secrets `CLOUDFLARE_API_TOKEN` (least privilege Worker deployment and D1 access) and `CLOUDFLARE_ACCOUNT_ID`. Add the GitHub variables `D1_DATABASE_ID`, `ACCESS_TEAM_DOMAIN`, and `ACCESS_AUD` through repository/production environment Settings. These account-specific values belong in GitHub configuration, not source files. The workflow tests and builds pull requests and main pushes without Cloudflare configuration; only a successful **main push** with all deployment inputs configured generates the private config, migrates, and deploys. Missing configuration produces a clear skipped-deployment notice. A GitHub production environment can enforce deployment review if desired. The frontend is a Worker Static Assets binding with `/api/*` Worker-first routing. No separate frontend host is required.
+Add all five deployment settings as GitHub repository/production environment **Secrets**: `CLOUDFLARE_API_TOKEN` (least privilege Worker deployment and D1 access), `CLOUDFLARE_ACCOUNT_ID`, `D1_DATABASE_ID`, `ACCESS_TEAM_DOMAIN`, and `ACCESS_AUD`. The last three also accept GitHub Variables for compatibility, with Secrets taking precedence. Prefer Secrets so GitHub masks account-specific values even in step environment headers; the workflow additionally registers metadata masks before Wrangler runs. These values belong in GitHub configuration, not source files. Provider keys remain Worker secrets and are not needed in GitHub Actions.
+
+The workflow tests and builds pull requests and main pushes without Cloudflare configuration; only a successful **main push** with all deployment inputs configured generates the private config, migrates, and deploys. Missing configuration produces a clear skipped-deployment notice. A GitHub production environment can enforce deployment review if desired. The frontend is a Worker Static Assets binding with `/api/*` Worker-first routing. No separate frontend host is required.
+
+If the deployment job skips, open its **Check deployment configuration** step. It reports each missing or invalid setting by name and where to add it, without displaying its value. Set these in GitHub **Settings → Secrets and variables → Actions → Secrets**, or in the selected `production` environment:
+
+- **Secrets:** `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (the account identifier is 32 hexadecimal characters).
+- **Secrets preferred; Variables also accepted:** `D1_DATABASE_ID` (D1 UUID), `ACCESS_TEAM_DOMAIN` (bare `team.cloudflareaccess.com`, without a URL scheme/path), and `ACCESS_AUD` (the Access application's audience).
+
+After correcting the settings, rerun the workflow. A skipped deployment leaves checks successful and makes no Cloudflare changes. The preflight checks configuration format, not whether the token has the required permissions or whether Access/D1 resources exist; those failures are reported by Wrangler during deployment. The workflow pins Ubuntu 24.04 and uses Node 24 action runtimes plus the project's Node 24/pnpm toolchain.
 
 For an explicitly requested manual deployment, keep the metadata environment variables set and use the generated config:
 
