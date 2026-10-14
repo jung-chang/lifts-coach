@@ -19,6 +19,7 @@ vi.mock('../src/lib/store', () => ({
 }));
 
 beforeEach(() => {
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
   fixture.data = emptyData();
   fixture.update.mockReset();
   fixture.update.mockImplementation(async (updater) => {
@@ -46,6 +47,37 @@ function startDraft() {
 }
 
 describe('integrated editor navigation', () => {
+  it('opens routine creation directly with the new title field focused', () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Create routine' }));
+    expect(document.activeElement).toBe(screen.getByLabelText('Routine name'));
+    expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: 'auto' });
+    fireEvent.change(screen.getByLabelText('Routine name'), {
+      target: { value: 'Synthetic title' },
+    });
+    expect(window.scrollTo).toHaveBeenCalledOnce();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(fixture.update).not.toHaveBeenCalled();
+  });
+
+  it('requires confirmation before deleting a saved routine', async () => {
+    const { createRoutine } = await import('../shared/domain');
+    fixture.data = { ...emptyData(), routines: [createRoutine('Synthetic push plan')] };
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Synthetic push plan' }));
+    const dialog = screen.getByRole('dialog', { name: 'Delete routine?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(fixture.data.routines).toHaveLength(1);
+    expect(fixture.update).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete Synthetic push plan' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Delete routine?' })).getByRole('button', {
+        name: 'Yes, delete',
+      }),
+    );
+    await waitFor(() => expect(fixture.data.routines).toHaveLength(0));
+  });
+
   it('preserves a changed draft when contextual Coach tries to open another routine', async () => {
     startDraft();
     fireEvent.click(screen.getByRole('button', { name: 'Ask Coach' }));

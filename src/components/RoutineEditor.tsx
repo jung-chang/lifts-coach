@@ -11,7 +11,7 @@ import {
 } from '../lib/routineDraft';
 import { Button } from './ui/Button';
 import { Sheet } from './ui/Sheet';
-import SwipeToDeleteRow from './SwipeToDeleteRow';
+import { parseRepRange } from '../lib/repRange';
 
 export function RoutineEditor({
   data,
@@ -37,6 +37,8 @@ export function RoutineEditor({
   const [customOpen, setCustomOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
   const [validation, setValidation] = useState('');
+  const [repDrafts, setRepDrafts] = useState<Record<string, string>>({});
+  const [numberDrafts, setNumberDrafts] = useState<Record<string, string>>({});
   const [custom, setCustom] = useState<Partial<Exercise>>({
     name: '',
     muscles: [],
@@ -56,16 +58,51 @@ export function RoutineEditor({
     try {
       setDraft(applyDraftEdits(draft, edits, library));
       setValidation('');
+      return true;
     } catch (e) {
       setValidation((e as Error).message);
+      return false;
     }
   };
   const deleteRequested = (prescriptionId: string) => setPendingDelete(prescriptionId);
   const confirmDelete = () => {
-    if (pendingDelete) edit([{ op: 'remove_exercise', exerciseId: pendingDelete }]);
+    if (pendingDelete) {
+      edit([{ op: 'remove_exercise', exerciseId: pendingDelete }]);
+      setRepDrafts((prev) => {
+        const next = { ...prev };
+        delete next[pendingDelete];
+        return next;
+      });
+      setNumberDrafts((prev) => {
+        const next = { ...prev };
+        for (const key of Object.keys(next))
+          if (key.endsWith(`-${pendingDelete}`)) delete next[key];
+        return next;
+      });
+    }
     setPendingDelete(null);
   };
   const requestSave = () => {
+    const currentPrescriptionIds = new Set(draft.routine.exercises.map((exercise) => exercise.id));
+    if (
+      Object.entries(repDrafts).some(
+        ([prescriptionId, value]) =>
+          currentPrescriptionIds.has(prescriptionId) && !parseRepRange(value),
+      )
+    ) {
+      setValidation(
+        'Enter reps as a whole number or range from 1 to 100, with the high value at least the low value.',
+      );
+      return;
+    }
+    const hasInvalidNumber = Object.keys(numberDrafts).some((key) => {
+      const prescriptionId = key.slice(key.indexOf('-') + 1);
+      return currentPrescriptionIds.has(prescriptionId);
+    });
+    if (hasInvalidNumber) {
+      setValidation('Use a valid value within the field limits before saving.');
+      return;
+    }
     const issue = validateRoutineDraft(draft, name);
     if (issue) {
       setValidation(issue);
@@ -147,6 +184,7 @@ export function RoutineEditor({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="e.g. Full body A"
+            autoFocus={!draft.source && !draft.proposalId}
           />
         </div>
         <div className="routine-editor-section-head">
@@ -174,11 +212,11 @@ export function RoutineEditor({
               const field = (
                 label: string,
                 value: number,
-                key: 'sets' | 'low' | 'high' | 'weight' | 'rest',
+                key: 'sets' | 'weight' | 'rest',
                 min: number,
                 max: number,
               ) => (
-                <div className="form-field" key={key}>
+                <div className="form-field compact-field" key={key}>
                   <label htmlFor={`${key}-${p.id}`}>{label}</label>
                   <input
                     id={`${key}-${p.id}`}
@@ -187,146 +225,231 @@ export function RoutineEditor({
                     min={min}
                     max={max}
                     step={key === 'weight' ? (data.settings.unit === 'kg' ? '0.1' : '0.5') : '1'}
-                    value={value}
+                    value={numberDrafts[`${key}-${p.id}`] ?? value}
+                    aria-invalid={numberDrafts[`${key}-${p.id}`] !== undefined}
                     onChange={(e) => {
-                      const n = Number(e.target.value);
-                      const next =
-                        key === 'sets'
-                          ? { sets: n }
-                          : key === 'low'
-                            ? { repRange: [n, Math.max(n, p.repRange[1])] as [number, number] }
-                            : key === 'high'
-                              ? { repRange: [Math.min(n, p.repRange[0]), n] as [number, number] }
-                              : key === 'weight'
-                                ? { targetWeight: fromDisplayWeight(n || 0, data.settings.unit) }
-                                : { restSeconds: n };
-                      edit([{ op: 'update_exercise', exerciseId: p.id, ...next }]);
+                      const raw = e.target.value;
+                      const n = Number(raw);
+                      const valid =
+                        raw.trim() !== '' &&
+                        Number.isFinite(n) &&
+                        n >= min &&
+                        n <= max &&
+                        (key === 'weight' || Number.isInteger(n));
+                      if (!valid) {
+                        setNumberDrafts((prev) => ({ ...prev, [`${key}-${p.id}`]: raw }));
+                        setValidation(
+                          `Enter a valid ${label.toLowerCase()} within the shown limits.`,
+                        );
+                        return;
+                      }
+                      try {
+                        const next =
+                          key === 'sets'
+                            ? { sets: n }
+                            : key === 'weight'
+                              ? { targetWeight: fromDisplayWeight(n, data.settings.unit) }
+                              : { restSeconds: n };
+                        if (
+                          'targetWeight' in next &&
+                          typeof next.targetWeight === 'number' &&
+                          next.targetWeight > 2000
+                        )
+                          throw new Error('Load exceeds the maximum supported weight.');
+                        if (!edit([{ op: 'update_exercise', exerciseId: p.id, ...next }])) {
+                          setNumberDrafts((prev) => ({ ...prev, [`${key}-${p.id}`]: raw }));
+                          return;
+                        }
+                        setNumberDrafts((prev) => {
+                          const next = { ...prev };
+                          delete next[`${key}-${p.id}`];
+                          return next;
+                        });
+                      } catch (error) {
+                        setNumberDrafts((prev) => ({ ...prev, [`${key}-${p.id}`]: raw }));
+                        setValidation((error as Error).message);
+                      }
                     }}
                   />
                 </div>
               );
+              const repValue =
+                repDrafts[p.id] ??
+                `${p.repRange[0]}${p.repRange[0] === p.repRange[1] ? '' : `–${p.repRange[1]}`}`;
               return (
-                <SwipeToDeleteRow
-                  key={p.id}
-                  id={p.id}
-                  label={ex?.name || p.exerciseId}
-                  onRequestDelete={() => deleteRequested(p.id)}
-                >
-                  <article className="routine-editor-item" data-prescription-id={p.id}>
-                    <div className="routine-editor-item-head">
-                      <span className="exercise-order">{String(i + 1).padStart(2, '0')}</span>
-                      <div className="grow">
-                        <b>{ex?.name || p.exerciseId}</b>
-                        <div className="muted small">
-                          {p.sets} × {p.repRange[0]}–{p.repRange[1]} ·{' '}
-                          {p.targetWeight
-                            ? `${toDisplayWeight(p.targetWeight, data.settings.unit)} ${data.settings.unit}`
-                            : 'No target weight'}
-                        </div>
-                      </div>
-                      <div className="routine-editor-actions">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`Move ${ex?.name || 'exercise'} up`}
-                          disabled={i === 0}
-                          onClick={() => {
-                            const ids = draft.routine.exercises.map((x) => x.id);
-                            [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
-                            edit([{ op: 'reorder_exercises', exerciseIds: ids }]);
-                          }}
-                        >
-                          <ArrowUp size={16} />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`Move ${ex?.name || 'exercise'} down`}
-                          disabled={i === draft.routine.exercises.length - 1}
-                          onClick={() => {
-                            const ids = draft.routine.exercises.map((x) => x.id);
-                            [ids[i + 1], ids[i]] = [ids[i], ids[i + 1]];
-                            edit([{ op: 'reorder_exercises', exerciseIds: ids }]);
-                          }}
-                        >
-                          <ArrowDown size={16} />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`Remove ${ex?.name || 'exercise'}`}
-                          onClick={() => deleteRequested(p.id)}
-                        >
-                          <Trash2 size={16} />
-                        </Button>
-                      </div>
+                <article className="routine-editor-item" data-prescription-id={p.id} key={p.id}>
+                  <div className="routine-editor-item-head">
+                    <div className="grow">
+                      <b>{ex?.name || p.exerciseId}</b>
+                      {p.loadMode === 'per-dumbbell' && (
+                        <div className="muted small">Weight is per dumbbell</div>
+                      )}
                     </div>
-                    <details className="routine-prescription-details">
-                      <summary>Prescription and exercise options</summary>
-                      <div className="profile-grid routine-prescription-grid">
-                        {field('Sets', p.sets, 'sets', 1, 30)}
-                        {field('Min reps', p.repRange[0], 'low', 1, 100)}
-                        {field('Max reps', p.repRange[1], 'high', 1, 100)}
-                        {field(
-                          `Target weight (${data.settings.unit})`,
-                          toDisplayWeight(p.targetWeight, data.settings.unit),
-                          'weight',
-                          0,
-                          2000,
-                        )}
-                        {field('Rest (sec)', p.restSeconds, 'rest', 0, 3600)}
-                        <div className="form-field">
-                          <label htmlFor={`replace-${p.id}`}>Replace exercise</label>
-                          <select
-                            id={`replace-${p.id}`}
-                            className="select input-sm"
-                            value={p.exerciseId}
-                            onChange={(e) =>
-                              edit([
-                                {
-                                  op: 'replace_exercise',
-                                  exerciseId: p.id,
-                                  replacementId: e.target.value,
-                                },
-                              ])
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="routine-explicit-remove"
+                      aria-label={`Remove ${ex?.name || 'exercise'}`}
+                      onClick={() => deleteRequested(p.id)}
+                    >
+                      <Trash2 size={16} />
+                    </Button>
+                  </div>
+                  <div className="routine-primary-fields">
+                    {field('Sets', p.sets, 'sets', 1, 30)}
+                    <div className="form-field compact-field">
+                      <label htmlFor={`reps-${p.id}`}>Reps</label>
+                      <input
+                        id={`reps-${p.id}`}
+                        className="input input-sm"
+                        value={repValue}
+                        inputMode="text"
+                        placeholder="8-12"
+                        aria-invalid={
+                          repDrafts[p.id] !== undefined && !parseRepRange(repDrafts[p.id])
+                        }
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            e.currentTarget.blur();
+                          }
+                        }}
+                        onChange={(e) => {
+                          const value = e.target.value;
+                          setRepDrafts({ ...repDrafts, [p.id]: value });
+                          const parsed = parseRepRange(value);
+                          if (parsed) {
+                            edit([{ op: 'update_exercise', exerciseId: p.id, repRange: parsed }]);
+                            setRepDrafts((prev) => {
+                              const next = { ...prev };
+                              delete next[p.id];
+                              return next;
+                            });
+                            if (validation.startsWith('Enter reps')) setValidation('');
+                          } else {
+                            setValidation(
+                              'Enter reps as a whole number or range from 1 to 100, with the high value at least the low value.',
+                            );
+                          }
+                        }}
+                        onBlur={() => {
+                          if (repDrafts[p.id] !== undefined && !parseRepRange(repDrafts[p.id]))
+                            setValidation(
+                              'Enter reps as a whole number or range from 1 to 100, with the high value at least the low value.',
+                            );
+                        }}
+                      />
+                    </div>
+                    {field(
+                      `${p.loadMode === 'per-dumbbell' ? `Load (${data.settings.unit})` : p.loadMode === 'bodyweight' ? `Added (${data.settings.unit})` : p.loadMode === 'assistance' ? `Assist (${data.settings.unit})` : `Target (${data.settings.unit})`}`,
+                      toDisplayWeight(p.targetWeight, data.settings.unit),
+                      'weight',
+                      0,
+                      2000,
+                    )}
+                  </div>
+                  <details className="routine-options">
+                    <summary>Options</summary>
+                    <div className="routine-options-actions">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Move ${ex?.name || 'exercise'} up`}
+                        disabled={i === 0}
+                        onClick={() => {
+                          const ids = draft.routine.exercises.map((x) => x.id);
+                          [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
+                          edit([{ op: 'reorder_exercises', exerciseIds: ids }]);
+                        }}
+                      >
+                        <ArrowUp size={16} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label={`Move ${ex?.name || 'exercise'} down`}
+                        disabled={i === draft.routine.exercises.length - 1}
+                        onClick={() => {
+                          const ids = draft.routine.exercises.map((x) => x.id);
+                          [ids[i + 1], ids[i]] = [ids[i], ids[i + 1]];
+                          edit([{ op: 'reorder_exercises', exerciseIds: ids }]);
+                        }}
+                      >
+                        <ArrowDown size={16} />
+                      </Button>
+                      {field('Rest (sec)', p.restSeconds, 'rest', 0, 3600)}
+                      <div className="form-field">
+                        <label htmlFor={`replace-${p.id}`}>Replace exercise</label>
+                        <select
+                          id={`replace-${p.id}`}
+                          className="select input-sm"
+                          value={p.exerciseId}
+                          onChange={(e) =>
+                            edit([
+                              {
+                                op: 'replace_exercise',
+                                exerciseId: p.id,
+                                replacementId: e.target.value,
+                              },
+                            ])
+                          }
+                        >
+                          {library.map((item) => (
+                            <option key={item.id} value={item.id}>
+                              {item.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="form-field">
+                        <label htmlFor={`increment-${p.id}`}>
+                          Progress increment ({data.settings.unit})
+                        </label>
+                        <input
+                          id={`increment-${p.id}`}
+                          className="input input-sm"
+                          type="number"
+                          min="0"
+                          step={data.settings.unit === 'kg' ? '0.1' : '0.5'}
+                          value={
+                            numberDrafts[`increment-${p.id}`] ??
+                            toDisplayWeight(increment, data.settings.unit)
+                          }
+                          aria-invalid={numberDrafts[`increment-${p.id}`] !== undefined}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            const n = Number(raw);
+                            if (!raw.trim() || !Number.isFinite(n) || n < 0 || n > 2000) {
+                              setNumberDrafts((prev) => ({ ...prev, [`increment-${p.id}`]: raw }));
+                              setValidation('Progress increment must be between 0 and 2000.');
+                              return;
                             }
-                          >
-                            {library.map((item) => (
-                              <option key={item.id} value={item.id}>
-                                {item.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="form-field">
-                          <label htmlFor={`increment-${p.id}`}>
-                            Progress increment ({data.settings.unit})
-                          </label>
-                          <input
-                            id={`increment-${p.id}`}
-                            className="input input-sm"
-                            type="number"
-                            min="0"
-                            step={data.settings.unit === 'kg' ? '0.1' : '0.5'}
-                            value={toDisplayWeight(increment, data.settings.unit)}
-                            onChange={(e) =>
+                            try {
+                              const increment = fromDisplayWeight(n, data.settings.unit);
+                              if (increment <= 0 || increment > 100)
+                                throw new Error('Invalid progression increment');
                               setDraft({
                                 ...draft,
-                                increments: {
-                                  ...draft.increments,
-                                  [p.exerciseId]: fromDisplayWeight(
-                                    Number(e.target.value) || 0,
-                                    data.settings.unit,
-                                  ),
-                                },
-                              })
+                                increments: { ...draft.increments, [p.exerciseId]: increment },
+                              });
+                              setNumberDrafts((prev) => {
+                                const next = { ...prev };
+                                delete next[`increment-${p.id}`];
+                                return next;
+                              });
+                              setValidation('');
+                            } catch {
+                              setNumberDrafts((prev) => ({ ...prev, [`increment-${p.id}`]: raw }));
+                              setValidation(
+                                'Use a positive progress increment up to 100 lb (45.3 kg).',
+                              );
                             }
-                          />
-                        </div>
+                          }}
+                        />
                       </div>
-                    </details>
-                  </article>
-                </SwipeToDeleteRow>
+                    </div>
+                  </details>
+                </article>
               );
             })}
           </div>

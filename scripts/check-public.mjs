@@ -2,13 +2,18 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
 // Print only locations and rule names, never a matched credential value.
+const deletedFiles = new Set(
+  execFileSync('git', ['ls-files', '--deleted', '-z'], { encoding: 'utf8' })
+    .split('\0')
+    .filter(Boolean),
+);
 const files = [
   ...new Set(
     execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
       encoding: 'utf8',
     })
       .split('\0')
-      .filter(Boolean),
+      .filter((file) => file && !deletedFiles.has(file)),
   ),
 ];
 const rules = [

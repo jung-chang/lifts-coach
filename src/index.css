@@ -1362,7 +1362,11 @@ summary {
   margin: 6px 0 0;
 }
 .routine-editor-item {
-  padding: 18px;
+  padding: 16px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
 }
 .routine-editor-item-head {
   display: flex;
@@ -1403,47 +1407,6 @@ summary {
 }
 .routine-empty-draft p {
   margin-bottom: 0;
-}
-.swipe-delete-row {
-  position: relative;
-  min-width: 0;
-  overflow: hidden;
-  border-radius: var(--radius-card);
-  background: var(--red-soft);
-}
-.swipe-delete-action {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 72px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--red);
-}
-.swipe-delete-action button {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  min-height: 56px;
-  width: 72px;
-  padding: 4px;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  font-size: 12px;
-  font-weight: 600;
-}
-.swipe-delete-foreground {
-  position: relative;
-  min-width: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  background: var(--surface);
-}
-.swipe-delete-foreground {
-  transition: transform 180ms ease;
 }
 .context-sheet-overlay {
   position: fixed;
@@ -1866,5 +1829,154 @@ summary {
   }
   .coach-message {
     max-width: 100% !important;
+  }
+}
+
+/* The current editor uses explicit removal and compact prescriptions. */
+.routine-primary-fields {
+  display: grid;
+  grid-template-columns: minmax(52px, 0.65fr) minmax(78px, 1fr) minmax(88px, 1.4fr);
+  align-items: end;
+  gap: 8px;
+  margin-top: 10px;
+}
+.routine-primary-fields .form-field {
+  gap: 4px;
+}
+.routine-primary-fields label {
+  font-size: 12px;
+}
+.routine-primary-fields input {
+  min-width: 44px;
+  min-height: 44px;
+  padding-inline: 8px;
+  font-size: 16px;
+}
+.routine-row-name {
+  overflow-wrap: anywhere;
+}
+.routine-options {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+}
+.routine-options summary,
+.set-adjust-options summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  cursor: pointer;
+  color: var(--sub);
+  font-size: 13px;
+}
+.routine-options-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.routine-options .routine-prescription-grid {
+  padding-top: 8px;
+}
+.routine-delete-button {
+  color: var(--red);
+  flex: none;
+}
+.set-adjust-options {
+  min-width: 0;
+}
+.set-step-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding-top: 8px;
+}
+.set-step-controls > div {
+  min-width: 0;
+}
+.set-step-controls .row {
+  flex-wrap: wrap;
+}
+.set-step-controls > .row {
+  display: grid;
+  grid-template-columns: repeat(2, 44px);
+  justify-content: start;
+  gap: 4px;
+}
+.set-step-controls > .row > span {
+  grid-column: 1 / -1;
+  font-size: 13px;
+  color: var(--sub);
+}
+.set-step-controls > .form-field {
+  grid-column: 1 / -1;
+  margin-top: 8px;
+}
+.set-prefill-note {
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+.set-entry-grid .set-primary-value {
+  display: block;
+}
+.set-entry-grid .set-primary-value input {
+  width: 100%;
+  min-width: 44px;
+  min-height: 46px;
+}
+.workout-focus > .page-heading > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.workout-focus > .page-heading > .row {
+  flex: none;
+  gap: 8px;
+}
+.mobile-exercise-picker {
+  display: none;
+}
+@media (max-width: 700px) {
+  .mobile-exercise-picker {
+    display: grid;
+  }
+  .workout-exercise-tabs {
+    display: none;
+  }
+  .workout-focus {
+    padding-bottom: 80px;
+  }
+  .workout-complete-action {
+    position: fixed;
+    z-index: 21;
+    left: var(--screen-padding);
+    bottom: calc(92px + env(safe-area-inset-bottom));
+    width: calc(100% - 2 * var(--screen-padding)) !important;
+    margin-top: 0 !important;
+  }
+  .app-shell:has(.workout-complete-action) .toast {
+    bottom: calc(154px + env(safe-area-inset-bottom));
+  }
+  .routine-editor-item {
+    padding: 12px;
+  }
+  .routine-editor-item-head {
+    flex-wrap: nowrap;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .routine-editor-item-head .grow {
+    flex-basis: auto;
+  }
+  .routine-editor-item-head .exercise-order {
+    width: 20px;
+    padding-top: 12px;
+  }
+  .routine-editor-item-head .routine-editor-actions {
+    width: auto;
+    flex: none;
+    align-self: flex-start;
+  }
+  .routine-primary-fields input {
+    padding-inline: 6px;
   }
 }

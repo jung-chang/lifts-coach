@@ -2,17 +2,25 @@
 
 This user-approved UX update keeps the protected product specification unchanged. Routine creation/editing is a full-page Train sub-screen at all widths. Contextual controls use mobile sheets.
 
+## Current refinement contract
+
+The owner's latest instruction removes exercise swipe gestures entirely and retains the explicit 44px Remove button with confirmation. Whole saved routines use a visible 44px trash button on Train; Cancel leaves data untouched and “Yes, delete” calls the shared `deleteRoutine` engine through the existing local transaction. Deletion keeps active and finished workout snapshots intact, removes scheduled overrides and rejects affected pending proposals, and preserves rotation continuity.
+
+Exercise prescriptions show three primary controls in one compact row: Sets, one Reps range field (for example `8–12`, with a single count supported), and Target weight. Rest, progression increment, replacement and reorder controls live behind Options. Parse ranges locally, stage only valid integer ranges from 1–100 with maximum at least minimum, and prevent saving invalid input. Keep 44px targets and readable decimal weights at 320px. Active-set logging keeps two full-width numeric fields; optional step controls are revealed progressively. Create routine opens the full-page editor directly, with the title input immediately available and focused for new drafts; no title modal.
+
+For this refinement, the Luna implementation agent owns `src/App.tsx`, `src/components/RoutineEditor.tsx` and their DOM tests, plus a bounded rep-range parser/test if needed. The orchestrator owns CSS, documentation, integration review and removal of unused swipe files. The root agent exclusively owns `shared/domain.ts` and `tests/core.test.ts` for routine deletion/rotation semantics. No Worker, store, protected spec or private configuration changes.
+
 ## Ownership for this implementation
 
-- Editor agent: `src/App.tsx`, `src/components/RoutineEditor.tsx`, `src/lib/routineDraft.ts`, editor/navigation helpers and corresponding tests.
-- Interaction agent: `src/components/SwipeToDeleteRow.tsx`, `src/lib/swipeDelete.ts`, `src/components/ui/Sheet.tsx`, swipe/sheet tests.
-- Orchestrator: `src/index.css`, integration review, documentation and configuration/dependencies.
+- Editor agent: `src/App.tsx`, `src/components/RoutineEditor.tsx`, the bounded rep-range parser and corresponding DOM/parser tests.
+- Root agent: `shared/domain.ts` and `tests/core.test.ts` for deletion, cleanup and rotation invariants.
+- Orchestrator: `src/index.css`, removal of unused gesture modules/tests, integration review and documentation.
 
 Implementation agents do not change domain, store, Worker, protected specification or private deployment files. The orchestrator exposed a small Retry sync wrapper around the existing connection/queue code and verified its lost-acknowledgement behavior. No sync or merge algorithm changed. Coordinate exports before adapting another agent's component.
 
 ## Shared components
 
-`SwipeToDeleteRow` accepts `{ id: string; label: string; children: ReactNode; onRequestDelete: () => void }`. `id` is the prescription ID, never the catalog exercise ID. A right swipe of about 72px reveals a Delete action; a larger swipe (approximately 180px or 55% of width, capped appropriately) requests confirmation. Neither gesture directly removes anything. Vertical scrolling remains native through `touch-action: pan-y`, and controls inside the row do not start a gesture. An explicit accessible Remove button/keyboard route remains available.
+Routine and exercise removal use explicit accessible buttons. Exercise removal targets the prescription ID so duplicate exercise entries remain independent. No gesture handler or row keyboard shortcut requests deletion. Confirmation changes only the draft; Save remains the persistence boundary.
 
 `Sheet` accepts the existing Dialog props `{ open, onOpenChange, title, description?, children }`. Use Radix Dialog for focus management/escape semantics; mobile is a bottom drawer, desktop is centered. Provide safe wrapping, scrolling, safe-area padding and 44px controls. Explicit destructive confirmation has Cancel and **Yes, remove**.
 

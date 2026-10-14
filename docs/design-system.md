@@ -18,17 +18,21 @@ Train has a single next-session card containing its routine title and plain meta
 
 The active set remains the primary interface. Keep the completion action visible on common phone sizes, use compact context above the set, and reveal reorder/substitution/bulk controls progressively. Mobile navigation has three clear tabs; desktop navigation is restrained and integrated with the shell. Preserve the in-app mini-player only while a workout is active on another screen.
 
+On phones, Complete Set is anchored above navigation, with content and Undo space reserved around it. Exercise tabs remain on desktop; phone exercise switching sits in today's Options alongside the existing Previous/Next actions, preserving room for the current set and readable values.
+
 Progress puts exercise strength and consistency first. Coach looks like a focused conversation, with quiet contextual actions and inspectable approvals. Routine editing and proposals share the same visual controls.
 
 ## Routine editing and contextual controls
 
 The owner's later usability request makes routine creation and editing a full-page Train sub-screen at every width. Its dedicated Back/title/Save header replaces the global navigation while editing. Manual and Coach routines use the same staged draft; exercise, custom-exercise and increment changes persist together only on Save. Leaving a changed draft requires a discard decision, including browser Back. Opening an untouched new draft does not prompt. An active workout stays intact and remains reachable through its mini-player.
 
-Swipe an exercise row to the right to reveal its removal action; a full right swipe requests confirmation. The explicit visible Remove button and keyboard shortcuts provide alternatives. Only “Yes, remove” changes the draft; Cancel preserves it, and the stored routine changes only after Save. This owner-requested confirmation overrides the previous immediate routine-item removal behavior without adding confirmation to ordinary workout logging.
+The owner's subsequent refinement removes exercise swipe gestures. An explicit Remove button opens confirmation; only “Yes, remove” changes the draft, and the stored routine changes only after Save. Saved routines on Train have a visible trash button with a separate “Yes, delete” confirmation. Routine deletion preserves active and completed workout snapshots and maintains the next surviving routine in the rotation. Ordinary workout logging still applies immediately with Undo.
+
+Exercise prescriptions keep Sets, one Reps range and Target weight together in a compact row. Rest, progression increment, replacement and reordering sit behind Options. New routines open the full-page editor directly with the title input ready; there is no title modal.
 
 Pickers, exercise context, corrections and confirmations use full-width bottom drawers on phones and centered panels on desktop. Settings separates General, Profile and Coach, with a reachable Data & sync page for backup, restore, status and explicit conflict resolution. Coach starts with three concise optional prompts; evidence and approval details remain inspectable.
 
-Responsive controls favor readable values over squeezing fields beside step buttons. Mobile load/repetition values occupy the full width above their 44px step controls. Dense set tables pan inside their own container rather than expanding the page. Coach reserves space for navigation and the active-session mini-player while its conversation scrolls above the composer.
+Responsive controls favor readable values over squeezing fields beside step buttons. Active-set load/repetition values occupy two wide primary inputs; 44px step buttons and optional bodyweight load mode appear under Adjust values. Dense set tables pan inside their own container rather than expanding the page. Coach reserves space for navigation and the active-session mini-player while its conversation scrolls above the composer.
 
 ## Semantics and boundaries
 

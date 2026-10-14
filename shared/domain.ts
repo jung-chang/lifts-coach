@@ -680,9 +680,21 @@ export function deleteRoutine(data: AppData, routineId: string): AppData {
     data.routines.some((r) => r.id === routineId),
     'Routine not found',
   );
+  const currentIndex = data.settings.rotationIndex % data.routines.length;
+  const nextRoutine = data.routines[currentIndex];
+  const routines = data.routines
+    .filter((r) => r.id !== routineId)
+    .map((r, position) => ({ ...r, position }));
+  const survivingIndex = routines.findIndex((r) => r.id === nextRoutine.id);
+  const rotationIndex = routines.length
+    ? survivingIndex >= 0
+      ? survivingIndex
+      : currentIndex % routines.length
+    : 0;
   return {
     ...data,
-    routines: data.routines.filter((r) => r.id !== routineId),
+    routines,
+    settings: { ...data.settings, rotationIndex },
     scheduledEdits: data.scheduledEdits.filter((s) => s.routineId !== routineId),
     proposals: data.proposals.map((p) =>
       p.status === 'pending' && p.targetId === routineId ? { ...p, status: 'rejected' } : p,

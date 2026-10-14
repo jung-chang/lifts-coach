@@ -7,6 +7,7 @@ import {
   completeSet,
   createPrescription,
   createRoutine,
+  deleteRoutine,
   editWorkout,
   emptyData,
   finishWorkout,
@@ -30,6 +31,62 @@ const base = () => {
 };
 
 describe('core domain invariants', () => {
+  it('deletes a routine while preserving workout snapshots and cleaning its future edits', () => {
+    let data = base();
+    const removed = data.routines[0];
+    data = startWorkout(data, removed.id);
+    data = finishWorkout(data, data.workouts[0].id);
+    data = startWorkout(data, removed.id);
+    const snapshots = JSON.stringify(data.workouts);
+    const proposal: Proposal = {
+      id: 'proposal-delete-test',
+      scope: 'routine',
+      targetId: removed.id,
+      edits: [],
+      rationale: 'Synthetic deletion regression',
+      evidenceIds: [],
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    };
+    data = {
+      ...data,
+      proposals: [proposal],
+      scheduledEdits: [
+        {
+          id: 'override-delete-test',
+          routineId: removed.id,
+          edits: [],
+        },
+      ],
+    };
+    const deleted = deleteRoutine(data, removed.id);
+    expect(deleted.routines).toHaveLength(0);
+    expect(deleted.settings.rotationIndex).toBe(0);
+    expect(deleted.scheduledEdits).toHaveLength(0);
+    expect(deleted.proposals[0].status).toBe('rejected');
+    expect(JSON.stringify(deleted.workouts)).toBe(snapshots);
+    expect(data.routines).toHaveLength(1);
+  });
+
+  it('keeps the next surviving routine stable and uses its successor when that routine is deleted', () => {
+    const routines = ['A', 'B', 'C'].map((name, i) => createRoutine(name, i));
+    const data = {
+      ...emptyData(),
+      routines,
+      settings: { ...emptyData().settings, rotationIndex: 1 },
+    };
+    const earlier = deleteRoutine(data, routines[0].id);
+    expect(earlier.routines[earlier.settings.rotationIndex].id).toBe(routines[1].id);
+    expect(earlier.routines.map((r) => r.position)).toEqual([0, 1]);
+    const next = deleteRoutine(data, routines[1].id);
+    expect(next.routines[next.settings.rotationIndex].id).toBe(routines[2].id);
+    const last = deleteRoutine(
+      { ...data, settings: { ...data.settings, rotationIndex: 2 } },
+      routines[2].id,
+    );
+    expect(last.routines[last.settings.rotationIndex].id).toBe(routines[0].id);
+  });
+
   it('ships a stable populated catalog in the requested range', () => {
     expect(catalog.length).toBeGreaterThanOrEqual(100);
     expect(catalog.length).toBeLessThanOrEqual(150);

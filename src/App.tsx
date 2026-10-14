@@ -14,7 +14,6 @@ import {
   FileDown,
   FileUp,
   History,
-  ListChecks,
   MoreHorizontal,
   Play,
   Plus,
@@ -24,6 +23,7 @@ import {
   Sparkles,
   Undo2,
   X,
+  Trash2,
 } from 'lucide-react';
 import {
   startWorkout,
@@ -39,6 +39,7 @@ import {
   fromDisplayWeight,
   id,
   replaceWorkoutExercise,
+  deleteRoutine,
 } from '../shared/domain';
 import { catalog } from '../shared/catalog';
 import { evidence as evidenceRecords } from '../evidence/records';
@@ -108,6 +109,7 @@ function App() {
   const [editorName, setEditorName] = useState('');
   const [editorReturnTab, setEditorReturnTab] = useState<Tab>('train');
   const [discardRequested, setDiscardRequested] = useState(false);
+  const [routineDeleteId, setRoutineDeleteId] = useState<string | null>(null);
   const [leaveEditorToWorkout, setLeaveEditorToWorkout] = useState(false);
   const editorBackCleanup = useRef<(() => void) | null>(null);
   const [notice, setNotice] = useState('');
@@ -150,6 +152,9 @@ function App() {
   });
   const active = data?.workouts.find((w: Workout) => w.status === 'active');
   const workout = data?.workouts.find((w: Workout) => w.id === (workoutId || active?.id));
+  useEffect(() => {
+    if (editorVisible) window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+  }, [editorVisible]);
   useEffect(() => {
     if (active && !workoutId) {
       setWorkoutId(active.id);
@@ -732,6 +737,14 @@ function App() {
                                   >
                                     <Play size={16} />
                                   </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label={`Delete ${r.name}`}
+                                    onClick={() => setRoutineDeleteId(r.id)}
+                                  >
+                                    <Trash2 size={16} />
+                                  </Button>
                                 </div>
                               ))}
                             </div>
@@ -930,6 +943,31 @@ function App() {
           e.currentTarget.value = '';
         }}
       />
+      <Sheet
+        open={routineDeleteId !== null}
+        onOpenChange={(open) => !open && setRoutineDeleteId(null)}
+        title="Delete routine?"
+        description={`${data.routines.find((r) => r.id === routineDeleteId)?.name || 'This routine'} will be removed. Active and completed workouts will be kept.`}
+      >
+        <div className="sheet-actions">
+          <Button onClick={() => setRoutineDeleteId(null)}>Cancel</Button>
+          <Button
+            variant="danger"
+            onClick={() => {
+              const target = routineDeleteId;
+              if (!target || !data.routines.some((r) => r.id === target)) {
+                setRoutineDeleteId(null);
+                return;
+              }
+              void safeUpdate((d) => deleteRoutine(d, target)).then((ok) => {
+                if (ok) setRoutineDeleteId(null);
+              });
+            }}
+          >
+            Yes, delete
+          </Button>
+        </div>
+      </Sheet>
       <Sheet
         open={discardRequested}
         onOpenChange={(open) => !open && setDiscardRequested(false)}
@@ -1488,7 +1526,10 @@ function WorkoutScreen({
         />
       </div>
       {workout.exercises.length > 1 && (
-        <div className="row" style={{ overflowX: 'auto', paddingBottom: 5, marginBottom: 13 }}>
+        <div
+          className="row workout-exercise-tabs"
+          style={{ overflowX: 'auto', paddingBottom: 5, marginBottom: 13 }}
+        >
           {workout.exercises.map((e: WorkoutExercise, i: number) => (
             <button
               key={e.id}
@@ -1572,44 +1613,21 @@ function WorkoutScreen({
                   {showTable ? 'Hide sets' : 'All sets'} <ChevronDown size={14} />
                 </Button>
               </div>
-              {ex.loadMode === 'bodyweight' && (
-                <div className="form-field" style={{ marginTop: 16 }}>
-                  <label htmlFor="bodyweight-mode">Record this set as</label>
-                  <select
-                    id="bodyweight-mode"
-                    className="select"
-                    value={activeSet.loadMode || 'bodyweight'}
-                    onChange={(e) =>
-                      editSet(ex.id, activeSet, {
-                        loadMode: e.target.value as WorkoutSet['loadMode'],
-                      })
-                    }
-                  >
-                    <option value="bodyweight">Added weight</option>
-                    <option value="assistance">Assistance weight</option>
-                  </select>
-                </div>
-              )}
               <div className="profile-grid set-entry-grid" style={{ marginTop: 16 }}>
                 {(['weight', 'reps'] as const).map((field) => (
                   <div key={field}>
                     <div className="field-label" style={{ textAlign: 'center', marginBottom: 8 }}>
                       {field === 'weight'
-                        ? ex.loadMode === 'per-dumbbell'
-                          ? 'Per dumbbell'
-                          : ex.loadMode === 'assistance'
-                            ? 'Assistance'
-                            : `Weight (${unit})`
+                        ? (activeSet.loadMode || ex.loadMode) === 'per-dumbbell'
+                          ? `Load (${unit})`
+                          : (activeSet.loadMode || ex.loadMode) === 'assistance'
+                            ? `Assist (${unit})`
+                            : (activeSet.loadMode || ex.loadMode) === 'bodyweight'
+                              ? `Added (${unit})`
+                              : `Weight (${unit})`
                         : 'Reps'}
                     </div>
-                    <div className="number-control">
-                      <Button
-                        size="icon"
-                        aria-label={`Decrease ${field}`}
-                        onClick={() => adjust(field, -(field === 'weight' ? 2.5 : 1))}
-                      >
-                        −
-                      </Button>
+                    <div className="number-control set-primary-value">
                       <input
                         aria-label={field}
                         className="input"
@@ -1631,6 +1649,23 @@ function WorkoutScreen({
                           })
                         }
                       />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <details className="set-adjust-options">
+                <summary>Adjust values</summary>
+                <div className="set-step-controls">
+                  {(['weight', 'reps'] as const).map((field) => (
+                    <div className="row" key={field}>
+                      <span>{field === 'weight' ? 'Weight' : 'Reps'}</span>
+                      <Button
+                        size="icon"
+                        aria-label={`Decrease ${field}`}
+                        onClick={() => adjust(field, -(field === 'weight' ? 2.5 : 1))}
+                      >
+                        −
+                      </Button>
                       <Button
                         size="icon"
                         aria-label={`Increase ${field}`}
@@ -1639,31 +1674,44 @@ function WorkoutScreen({
                         +
                       </Button>
                     </div>
-                  </div>
-                ))}
-              </div>
-              <div className="row space-between" style={{ marginTop: 13 }}>
-                <span className="muted small">
-                  {data.workouts.some(
-                    (w: Workout) =>
-                      w.status === 'finished' &&
-                      w.exercises.some(
-                        (item: WorkoutExercise) =>
-                          item.exerciseId === ex.exerciseId &&
-                          item.actualSets.some((s: WorkoutSet) => s.status === 'completed'),
-                      ),
-                  )
-                    ? 'Prefilled from your latest set'
-                    : 'Routine targets · edit for today'}
-                </span>
-                <Button variant="ghost" size="sm" onClick={() => setShowTable(!showTable)}>
-                  <ListChecks size={15} />
-                  Edit table
-                </Button>
-              </div>
+                  ))}
+                  {ex.loadMode === 'bodyweight' && (
+                    <div className="form-field">
+                      <label htmlFor="bodyweight-mode">Record this set as</label>
+                      <select
+                        id="bodyweight-mode"
+                        className="select"
+                        value={activeSet.loadMode || 'bodyweight'}
+                        onChange={(e) =>
+                          editSet(ex.id, activeSet, {
+                            loadMode: e.target.value as WorkoutSet['loadMode'],
+                          })
+                        }
+                      >
+                        <option value="bodyweight">Added weight</option>
+                        <option value="assistance">Assistance weight</option>
+                      </select>
+                    </div>
+                  )}
+                </div>
+              </details>
+              <p className="muted small set-prefill-note">
+                {data.workouts.some(
+                  (w: Workout) =>
+                    w.status === 'finished' &&
+                    w.exercises.some(
+                      (item: WorkoutExercise) =>
+                        item.exerciseId === ex.exerciseId &&
+                        item.actualSets.some((s: WorkoutSet) => s.status === 'completed'),
+                    ),
+                )
+                  ? 'Prefilled from your latest set'
+                  : 'Routine targets · edit for today'}
+              </p>
               <Button
                 variant="success"
                 size="lg"
+                className="workout-complete-action"
                 style={{ width: '100%', marginTop: 18 }}
                 onClick={logSet}
               >
@@ -1900,6 +1948,21 @@ function WorkoutScreen({
               <b>Make today’s workout yours</b>
               <span className="muted small">Reorder or substitute for today</span>
             </summary>
+            <div className="form-field mobile-exercise-picker" style={{ marginTop: 14 }}>
+              <label htmlFor="choose-today-exercise">Choose exercise</label>
+              <select
+                id="choose-today-exercise"
+                className="select"
+                value={currentEx}
+                onChange={(event) => setCurrentEx(Number(event.target.value))}
+              >
+                {workout.exercises.map((exercise: WorkoutExercise, index: number) => (
+                  <option key={exercise.id} value={index}>
+                    {index + 1}. {exercise.name}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div style={{ marginTop: 14 }}>
               <div className="row">
                 <Button
