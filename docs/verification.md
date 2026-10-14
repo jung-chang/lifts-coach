@@ -1,6 +1,6 @@
 # Prototype verification
 
-Verified during the prototype implementation on October 13, 2026. The repository is **Lifts Coach**, using the Electric Minimal design from the protected product specification.
+The original **Lifts Coach** prototype was verified on October 13, 2026 with the specification's Electric Minimal design. The owner subsequently requested a Maia/Olive/Yellow redesign; this visual override is recorded in [the design system](design-system.md), while the protected specification remains unchanged.
 
 ## Automated checks observed
 
@@ -16,6 +16,12 @@ Verified during the prototype implementation on October 13, 2026. The repository
 Using synthetic QA data, verified manual routine creation and exercise selection, workout start, completion and Undo with timer restoration, mini-player visibility on Progress, reload recovery, incomplete finishing, post-workout load corrections, repeat-from-history and lb/kg display conversion.
 
 The final workout layout was checked at 390 × 844: the Complete Set action was above fixed navigation without horizontal overflow. At 320px, load/repetition fields measured approximately 118 × 53px with no horizontal overflow. At 1280px, the app used its 1120px content width without overflow. Icon-only actions and profile fields have accessible names. These checks do not replace device or assistive-technology testing.
+
+## Maia redesign checks
+
+The redesign uses self-hosted Geist, warm olive neutrals, restrained yellow primary actions, simpler routine/history rows, plain Progress empty states and neutral Coach messages. The underlying workout, storage and Worker behavior is unchanged.
+
+Using synthetic QA data, the revised workout was checked with an active rest timer at 390 × 844 and 320px widths. At 390px, the completion action ended around 696px above navigation at 777px, and the decimal load `20.4` remained fully visible. At 320px, the action ended around 752px above navigation at 762px; load/repetition fields measured approximately 123 × 49px, the timer remained legible, and there was no horizontal overflow. Desktop navigation now sits in the header rather than covering the workout action. Complete/Undo preserved both the set count and the prior timer deadline; incomplete finishing still saved performed sets. Routine editing keeps full-width exercise names with mobile action controls on a separate row.
 
 ## Cloudflare preparation observed
 

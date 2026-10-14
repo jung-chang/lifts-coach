@@ -25,7 +25,7 @@ The owner requested a **gpt-6.1-sol / high** orchestrator and **gpt-6-luna / med
 
 ## Design system and product invariants
 
-Follow the spec's Electric Minimal light-first design: system font or Inter, 4px spacing foundation, off-white canvas, white surfaces, approximately 16px card/12px control radii, and at least 44px interactive targets. Blue starts, green completes, red rejects and purple denotes model-generated content or pending AI proposals. Deterministic defaults, timers, rotation and progression must not be branded as AI.
+The owner's subsequent visual redesign request overrides the spec's original Electric Minimal aesthetic; never modify the protected spec to record this override. Follow the Maia preset direction recorded in `docs/design-system.md`: warm olive off-white canvas, white surfaces, olive/ink neutrals, restrained yellow primary actions, self-hosted Geist heading/body typography, Lucide icons, generous rounded cards and minimal divider-based lists. Avoid colored washes, decorative shadows, excessive pills and heavy bold typography. Keep interactive targets at least 44px. Completion, error and genuinely model-generated actions retain restrained semantic cues. Deterministic defaults, timers, rotation and progression must not be branded as AI.
 
 Prioritize the focused current-set workout and a visible primary completion action at phone sizes. Hide secondary controls progressively. Train resumes an active session; show its mini-player only on other views while training.
 

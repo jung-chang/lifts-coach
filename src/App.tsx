@@ -627,12 +627,7 @@ function App() {
     return (
       <div className="app-shell">
         <header className="topbar">
-          <div className="brand">
-            <span className="brand-mark">
-              <Activity size={18} />
-            </span>
-            Lifts Coach
-          </div>
+          <div className="brand">Lifts Coach</div>
           <span className="pill">
             <span className="status-dot" />
             Starting locally
@@ -653,14 +648,9 @@ function App() {
   const showMini = !!active && tab !== 'train';
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell${showMini ? ' has-active-session' : ''}`}>
       <header className="topbar">
-        <div className="brand">
-          <span className="brand-mark">
-            <Activity size={18} />
-          </span>
-          Lifts Coach
-        </div>
+        <div className="brand">Lifts Coach</div>
         <div className="top-actions">
           <span className="pill desktop-only">
             <span className="status-dot" />
@@ -692,193 +682,124 @@ function App() {
       {tab === 'train' && (
         <main className="page">
           {!viewedWorkout ? (
-            <>
-              <div className="page-heading">
-                <div>
-                  <div className="eyebrow">Your training</div>
-                  <h1>Train</h1>
+            data.routines.length === 0 ? (
+              <div className="card card-pad first-run-card">
+                <div className="eyebrow">Train</div>
+                <h1>Start with a routine</h1>
+                <p className="muted">
+                  Create a plan that fits your training, or ask Coach to help shape one.
+                </p>
+                <div className="row first-run-actions">
+                  <Button variant="primary" size="lg" onClick={() => openRoutine()}>
+                    <Plus size={19} /> Create routine
+                  </Button>
+                  <Button variant="ai" onClick={() => openCoach({}, false)}>
+                    <Sparkles size={17} /> Ask Coach to create one
+                  </Button>
                 </div>
-                <Button
-                  variant="secondary"
-                  aria-label="Open settings"
-                  onClick={() => {
-                    setProfileDraft(structuredClone(data.settings));
-                    setModal('settings');
-                  }}
-                >
-                  <SettingsIcon size={17} />
-                  <span className="desktop-only">Settings</span>
-                </Button>
               </div>
-              {data.routines.length === 0 ? (
-                <div className="card card-pad" style={{ padding: '32px 24px' }}>
-                  <div className="empty-icon">
-                    <Dumbbell size={22} />
-                  </div>
-                  <div style={{ textAlign: 'center', maxWidth: 440, margin: '0 auto' }}>
-                    <div className="eyebrow">A fresh start</div>
-                    <h2 style={{ marginTop: 6 }}>Build a routine that fits you</h2>
-                    <p className="muted">
-                      Keep it simple. Add exercises, set your targets, then get straight to
-                      training.
-                    </p>
-                    <div className="stack" style={{ maxWidth: 340, margin: '22px auto 0' }}>
-                      <Button variant="primary" size="lg" onClick={() => openRoutine()}>
-                        <Plus size={19} />
-                        Create routine
-                      </Button>
-                      <Button variant="ai" onClick={() => openCoach({}, false)}>
-                        <Sparkles size={17} />
-                        Ask Coach to create one
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  {active && (
-                    <div
-                      className="card card-pad"
-                      style={{ borderColor: '#cfe8dd', background: 'var(--surface)' }}
-                    >
-                      <div className="row space-between">
-                        <div>
-                          <span className="pill pill-green">Workout in progress</span>
-                          <h2 style={{ marginTop: 12 }}>{active.name}</h2>
-                          <p className="muted small">
-                            Started {duration(active.startedAt)} min ago · {completedSets(active)}{' '}
-                            of {totalSets(active)} sets complete
-                          </p>
-                        </div>
-                        <Button
-                          variant="primary"
-                          onClick={() => {
-                            setWorkoutId(active.id);
-                            setTab('train');
-                          }}
-                        >
-                          <Play size={17} />
-                          Resume
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                  <section className="section-title">
-                    <div>
-                      <div className="eyebrow">Up next</div>
-                      <h2 style={{ marginTop: 4 }}>
-                        {data.routines[
-                          data.settings.rotationIndex % Math.max(data.routines.length, 1)
-                        ]?.name || 'Choose a routine'}
-                      </h2>
-                    </div>
-                    <Button variant="secondary" size="sm" onClick={() => openRoutine()}>
-                      <Plus size={15} />
-                      New
-                    </Button>
-                  </section>
-                  {(() => {
-                    const next =
-                      data.routines[data.settings.rotationIndex % data.routines.length] ||
-                      data.routines[0];
-                    return (
-                      <div className="card card-pad">
-                        <div className="row space-between">
-                          <div>
-                            <div className="tag-row">
-                              <span className="pill pill-blue">
-                                <Dumbbell size={13} />
-                                {next.exercises.length} exercises
-                              </span>
-                              <span className="pill">
-                                {next.exercises.reduce((a, e) => a + e.sets, 0)} sets
-                              </span>
-                              <span className="pill">
-                                <Clock3 size={13} />
-                                {Math.max(
-                                  10,
-                                  Math.round(
-                                    next.exercises.reduce(
-                                      (a, e) => a + e.sets * (e.restSeconds + 35),
-                                      0,
-                                    ) / 60,
-                                  ),
-                                )}{' '}
-                                min
-                              </span>
-                            </div>
-                            <p className="muted small" style={{ margin: '13px 0 0' }}>
+            ) : (
+              <>
+                {(() => {
+                  const next =
+                    data.routines[data.settings.rotationIndex % data.routines.length] ||
+                    data.routines[0];
+                  return (
+                    <div className="dashboard-grid">
+                      <section className="card card-pad next-session-card">
+                        {active ? (
+                          <>
+                            <div className="eyebrow">Workout in progress</div>
+                            <h1>{active.name}</h1>
+                            <p className="muted session-summary">
+                              {completedSets(active)} of {totalSets(active)} sets <span>·</span>{' '}
+                              {duration(active.startedAt)} min
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <div className="eyebrow">Up next</div>
+                            <h1>{next.name}</h1>
+                            <p className="muted session-summary">
+                              {next.exercises.length} exercises <span>·</span>{' '}
+                              {next.exercises.reduce((a, e) => a + e.sets, 0)} sets <span>·</span>{' '}
+                              {Math.max(
+                                10,
+                                Math.round(
+                                  next.exercises.reduce(
+                                    (a, e) => a + e.sets * (e.restSeconds + 35),
+                                    0,
+                                  ) / 60,
+                                ),
+                              )}{' '}
+                              min
+                            </p>
+                            <p className="muted small session-exercises">
                               {next.exercises
                                 .slice(0, 3)
                                 .map((p) => exerciseById(p.exerciseId)?.name || p.exerciseId)
                                 .join(' · ')}
                               {next.exercises.length > 3 ? ' · …' : ''}
                             </p>
-                          </div>
-                          <Button
-                            variant="primary"
-                            size="lg"
-                            onClick={() => start(next.id)}
-                            disabled={!next.exercises.length}
-                          >
-                            <Play size={18} fill="currentColor" />
-                            Start workout
+                          </>
+                        )}
+                        <Button
+                          variant="primary"
+                          size="lg"
+                          className="session-start"
+                          onClick={() => {
+                            if (active) {
+                              setWorkoutId(active.id);
+                              setTab('train');
+                            } else start(next.id);
+                          }}
+                          disabled={!active && !next.exercises.length}
+                        >
+                          <Play size={18} fill="currentColor" />{' '}
+                          {active ? 'Resume workout' : 'Start workout'}
+                        </Button>
+                      </section>
+                      <section className="routine-panel">
+                        <div className="section-title">
+                          <h2>Saved routines</h2>
+                          <Button variant="ghost" size="sm" onClick={() => openRoutine()}>
+                            <Plus size={15} /> New
                           </Button>
                         </div>
-                      </div>
-                    );
-                  })()}
-                  <div className="section-title">
-                    <div>
-                      <div className="eyebrow">Your plans</div>
-                      <h2 style={{ marginTop: 4 }}>Saved routines</h2>
-                    </div>
-                  </div>
-                  <div className="routine-list">
-                    {data.routines.map((r, i) => (
-                      <div className="routine-row" key={r.id}>
-                        <div className="routine-icon">
-                          <Dumbbell size={19} />
+                        <div className="routine-list">
+                          {data.routines.map((r, i) => (
+                            <div className="routine-row" key={r.id}>
+                              <button className="routine-row-main" onClick={() => openRoutine(r)}>
+                                <span className="routine-row-name">{r.name}</span>
+                                <span className="muted small">
+                                  {r.exercises.length} exercises ·{' '}
+                                  {r.exercises.reduce((a, e) => a + e.sets, 0)} sets
+                                  {i === data.settings.rotationIndex % data.routines.length
+                                    ? ' · Up next'
+                                    : ''}
+                                </span>
+                              </button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                aria-label={`Start ${r.name}`}
+                                onClick={() => start(r.id)}
+                                disabled={!r.exercises.length}
+                              >
+                                <Play size={16} />
+                              </Button>
+                            </div>
+                          ))}
                         </div>
-                        <div className="grow">
-                          <div className="row" style={{ gap: 8 }}>
-                            <h3 style={{ margin: 0 }}>{r.name}</h3>
-                            {i === data.settings.rotationIndex % data.routines.length && (
-                              <span className="pill pill-blue">Up next</span>
-                            )}
-                          </div>
-                          <div className="muted small" style={{ marginTop: 5 }}>
-                            {r.exercises.length} exercises ·{' '}
-                            {r.exercises.reduce((a, e) => a + e.sets, 0)} sets
-                          </div>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`Edit ${r.name}`}
-                          onClick={() => openRoutine(r)}
-                        >
-                          <MoreHorizontal />
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          onClick={() => start(r.id)}
-                          disabled={!r.exercises.length}
-                        >
-                          <Play size={15} />
-                          Start
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="section-title">
-                    <div>
-                      <div className="eyebrow">Recent sessions</div>
-                      <h2 style={{ marginTop: 4 }}>History</h2>
+                      </section>
                     </div>
+                  );
+                })()}
+                <section className="train-history">
+                  <div className="section-title">
+                    <h2>Recent workouts</h2>
                     <Button size="sm" variant="ghost" onClick={() => setTab('progress')}>
-                      View all <ArrowRight size={15} />
+                      View history <ArrowRight size={15} />
                     </Button>
                   </div>
                   {data.workouts.filter((w) => w.status === 'finished').length === 0 ? (
@@ -891,26 +812,22 @@ function App() {
                       .slice(0, 3)
                       .map((w) => (
                         <div className="history-item" key={w.id}>
-                          <div className="routine-icon">
-                            <CheckCircle2 size={19} />
-                          </div>
                           <div className="grow">
                             <b>{w.name}</b>
-                            <div className="muted small" style={{ marginTop: 4 }}>
+                            <div className="muted small">
                               {dateLabel(w.startedAt)} · {duration(w.startedAt, w.completedAt)} min
                               · {completedSets(w)} sets
                             </div>
                           </div>
                           <Button size="sm" variant="secondary" onClick={() => repeat(w.id)}>
-                            <RotateCcw size={15} />
-                            Repeat
+                            <RotateCcw size={15} /> Repeat
                           </Button>
                         </div>
                       ))
                   )}
-                </>
-              )}
-            </>
+                </section>
+              </>
+            )
           ) : (
             <WorkoutScreen
               data={data}
@@ -994,12 +911,6 @@ function App() {
             setTab('train');
           }}
         >
-          <div
-            className="routine-icon"
-            style={{ background: '#ffffff1e', color: 'white', width: 38, height: 38 }}
-          >
-            <Dumbbell size={18} />
-          </div>
           <div className="grow">
             <b>{active!.name}</b>
             <div className="muted small">
@@ -1098,13 +1009,17 @@ function App() {
                   Ask Coach
                 </Button>
               </div>
-              <div className="routine-list">
+              <div className="routine-list routine-editor-list">
                 {routine.exercises.map((p, i) => {
                   const ex = exerciseById(p.exerciseId);
                   return (
-                    <div className="card" key={p.id} style={{ padding: '12px 14px' }}>
+                    <div
+                      className="card routine-editor-item"
+                      key={p.id}
+                      style={{ padding: '12px 14px' }}
+                    >
                       <div className="row">
-                        <span className="pill">{String(i + 1).padStart(2, '0')}</span>
+                        <span className="exercise-order">{String(i + 1).padStart(2, '0')}</span>
                         <div className="grow">
                           <b>{ex?.name || p.exerciseId}</b>
                           <div className="muted small">
@@ -1114,43 +1029,45 @@ function App() {
                               : 'No target weight'}
                           </div>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`Move ${ex?.name} up`}
-                          disabled={i === 0}
-                          onClick={() => {
-                            const ids = routine.exercises.map((x) => x.id);
-                            [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
-                            applyRoutineEdits(routine.id, [
-                              { op: 'reorder_exercises', exerciseIds: ids },
-                            ]);
-                          }}
-                        >
-                          <ArrowUp size={16} />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={`Move ${ex?.name} down`}
-                          disabled={i === routine.exercises.length - 1}
-                          onClick={() => {
-                            const ids = routine.exercises.map((x) => x.id);
-                            [ids[i + 1], ids[i]] = [ids[i], ids[i + 1]];
-                            applyRoutineEdits(routine.id, [
-                              { op: 'reorder_exercises', exerciseIds: ids },
-                            ]);
-                          }}
-                        >
-                          <ArrowDown size={16} />
-                        </Button>
-                        <button
-                          className="icon-button"
-                          aria-label={`Remove ${ex?.name}`}
-                          onClick={() => removePrescription(routine.id, p.id)}
-                        >
-                          <Trash2 size={17} />
-                        </button>
+                        <div className="routine-editor-actions">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Move ${ex?.name} up`}
+                            disabled={i === 0}
+                            onClick={() => {
+                              const ids = routine.exercises.map((x) => x.id);
+                              [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
+                              applyRoutineEdits(routine.id, [
+                                { op: 'reorder_exercises', exerciseIds: ids },
+                              ]);
+                            }}
+                          >
+                            <ArrowUp size={16} />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={`Move ${ex?.name} down`}
+                            disabled={i === routine.exercises.length - 1}
+                            onClick={() => {
+                              const ids = routine.exercises.map((x) => x.id);
+                              [ids[i + 1], ids[i]] = [ids[i], ids[i + 1]];
+                              applyRoutineEdits(routine.id, [
+                                { op: 'reorder_exercises', exerciseIds: ids },
+                              ]);
+                            }}
+                          >
+                            <ArrowDown size={16} />
+                          </Button>
+                          <button
+                            className="icon-button"
+                            aria-label={`Remove ${ex?.name}`}
+                            onClick={() => removePrescription(routine.id, p.id)}
+                          >
+                            <Trash2 size={17} />
+                          </button>
+                        </div>
                       </div>
                       <details style={{ marginTop: 9 }}>
                         <summary
@@ -1887,21 +1804,23 @@ function WorkoutScreen({
           }}
         />
       </div>
-      <div className="row" style={{ overflowX: 'auto', paddingBottom: 5, marginBottom: 13 }}>
-        {workout.exercises.map((e: WorkoutExercise, i: number) => (
-          <button
-            key={e.id}
-            className={`pill ${i === currentEx ? 'pill-blue' : ''}`}
-            onClick={() => setCurrentEx(i)}
-            style={{ minHeight: 44, whiteSpace: 'nowrap' }}
-          >
-            {i + 1}. {e.name}
-          </button>
-        ))}
-      </div>
+      {workout.exercises.length > 1 && (
+        <div className="row" style={{ overflowX: 'auto', paddingBottom: 5, marginBottom: 13 }}>
+          {workout.exercises.map((e: WorkoutExercise, i: number) => (
+            <button
+              key={e.id}
+              className={`workout-exercise-tab ${i === currentEx ? 'active' : ''}`}
+              onClick={() => setCurrentEx(i)}
+              style={{ minHeight: 44, whiteSpace: 'nowrap' }}
+            >
+              {i + 1}. {e.name}
+            </button>
+          ))}
+        </div>
+      )}
       {ex ? (
         <>
-          <div className="card card-pad" style={{ marginBottom: 14 }}>
+          <div className="card card-pad workout-exercise-card" style={{ marginBottom: 14 }}>
             <div className="row space-between">
               <div>
                 <div className="eyebrow">
@@ -1917,7 +1836,7 @@ function WorkoutScreen({
               </button>
             </div>
             {ex.actualSets.filter((s: WorkoutSet) => s.kind === 'working').length > 0 && (
-              <div className="row" style={{ gap: 6, marginTop: 15 }}>
+              <div className="row" style={{ gap: 6, marginTop: 10 }}>
                 {ex.actualSets
                   .filter((s: WorkoutSet) => s.kind === 'working')
                   .map((s: WorkoutSet, i: number) => (
@@ -1932,10 +1851,10 @@ function WorkoutScreen({
             )}
           </div>
           {workout.restEndsAt && (
-            <div className="rest-box" style={{ marginBottom: 14 }}>
+            <div className="rest-box" style={{ marginBottom: 10 }}>
               <Clock3 size={19} />
-              <div className="grow">
-                <div className="small">Rest timer</div>
+              <div className="grow rest-timer-context">
+                <div className="small">Rest</div>
                 <div className="timer">
                   {Math.floor(restLeft / 60)}:{String(restLeft % 60).padStart(2, '0')}
                 </div>
@@ -1954,7 +1873,7 @@ function WorkoutScreen({
             </div>
           )}
           {activeSet ? (
-            <div className="card set-focus">
+            <div className="card set-focus active-set-card">
               <div className="row space-between">
                 <div>
                   <div className="set-number">
@@ -2263,7 +2182,7 @@ function WorkoutScreen({
                               })
                             }
                           >
-                            <span style={{ fontSize: 11, fontWeight: 700 }}>
+                            <span style={{ fontSize: 11, fontWeight: 500 }}>
                               {s.kind === 'warmup' ? 'W' : '·'}
                             </span>
                           </button>
@@ -2460,7 +2379,9 @@ function ProgressScreen({
               <div className="eyebrow">Strength trend</div>
               <h2 style={{ marginTop: 4 }}>{selected?.name || 'Exercise progress'}</h2>
             </div>
-            {selected && <span className="pill pill-blue">{selected.points.length} sessions</span>}
+            {selected && (
+              <span className="progress-count muted small">{selected.points.length} sessions</span>
+            )}
           </div>
           {entries.length > 0 && (
             <div className="form-field" style={{ marginTop: 12 }}>
@@ -2512,39 +2433,42 @@ function ProgressScreen({
               </p>
             </>
           ) : (
-            <div className="empty-state" style={{ marginTop: 20 }}>
-              <div className="empty-icon">
-                <BarChart3 />
-              </div>
+            <div className="progress-empty">
               <b>Strength trends will build here</b>
-              <p className="muted small" style={{ margin: '6px 0 0' }}>
-                Complete a few workouts to see how your lifts change.
-              </p>
+              <p className="muted small">Complete a few workouts to see how your lifts change.</p>
             </div>
           )}
         </section>
         <section className="card card-pad">
           <div className="eyebrow">Consistency</div>
           <h2 style={{ marginTop: 4 }}>Training weeks</h2>
-          <div className="chart" aria-label="Workouts per week">
-            {weeks.map((w, i) => (
-              <div className="chart-col" key={i}>
-                <span className="small tabular">{w.count || ''}</span>
-                <div
-                  className="chart-bar"
-                  style={{
-                    height: `${w.count ? Math.max(8, (w.count / max) * 67) : 2}%`,
-                    opacity: w.count ? 1 : 0.18,
-                  }}
-                />
-                <span className="chart-label">{w.label}</span>
+          {finished.length > 0 ? (
+            <>
+              <div className="chart" aria-label="Workouts per week">
+                {weeks.map((w, i) => (
+                  <div className="chart-col" key={i}>
+                    <span className="small tabular">{w.count || ''}</span>
+                    <div
+                      className="chart-bar"
+                      style={{
+                        height: `${w.count ? Math.max(8, (w.count / max) * 67) : 2}%`,
+                        opacity: w.count ? 1 : 0.18,
+                      }}
+                    />
+                    <span className="chart-label">{w.label}</span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <div className="row space-between" style={{ marginTop: 13 }}>
-            <span className="muted small">Last 8 weeks</span>
-            <b>{finished.length} completed workouts</b>
-          </div>
+              <div className="row space-between" style={{ marginTop: 13 }}>
+                <span className="muted small">Last 8 weeks</span>
+                <b>{finished.length} completed workouts</b>
+              </div>
+            </>
+          ) : (
+            <p className="progress-empty muted small">
+              Workout consistency will appear after your first session.
+            </p>
+          )}
         </section>
       </div>
       <div className="section-title">
@@ -2554,20 +2478,13 @@ function ProgressScreen({
         </div>
       </div>
       {finished.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-icon">
-            <History />
-          </div>
-          <h3>Your training history starts with the first workout</h3>
-          <p className="muted small">Strength trends and consistency will appear as you train.</p>
+        <div className="card card-pad progress-empty">
+          <p className="muted small">Your training history starts with the first workout.</p>
         </div>
       ) : (
         <div className="card card-pad">
           {finished.map((w: Workout) => (
             <div key={w.id} className="history-item" style={{ alignItems: 'flex-start' }}>
-              <div className="routine-icon">
-                <CheckCircle2 size={19} />
-              </div>
               <div className="grow">
                 <div className="row space-between">
                   <div>
@@ -2630,7 +2547,9 @@ function CoachScreen({
       style={{
         display: 'flex',
         flexDirection: 'column',
-        minHeight: 'calc(100vh - 180px)',
+        minHeight: data.workouts.some((w: Workout) => w.status === 'active')
+          ? 'calc(100dvh - 240px)'
+          : 'calc(100dvh - 150px)',
         maxWidth: 850,
         margin: '0 auto',
       }}
@@ -2645,10 +2564,7 @@ function CoachScreen({
           Build a routine
         </Button>
       </div>
-      <div
-        className="notice"
-        style={{ background: 'var(--purple-soft)', color: '#75519a', marginBottom: 14 }}
-      >
+      <div className="coach-context-note muted small">
         Coach considers your routines and training profile. Program edits always wait for your
         review.
       </div>
@@ -2665,6 +2581,7 @@ function CoachScreen({
       )}
       <div
         ref={scroll}
+        className="coach-thread"
         style={{
           flex: 1,
           overflowY: 'auto',
@@ -2675,22 +2592,16 @@ function CoachScreen({
         }}
       >
         {data.messages.length === 0 && (
-          <div className="empty-state">
-            <div
-              className="empty-icon"
-              style={{ background: 'var(--purple-soft)', color: 'var(--purple)' }}
-            >
-              <Sparkles />
-            </div>
-            <h3>What would you like to work on?</h3>
+          <div className="coach-empty">
+            <h2>What would you like to work on?</h2>
             <p className="muted small">Ask about a lift, a plateau, or adapting your plan.</p>
-            <div className="tag-row" style={{ justifyContent: 'center', marginTop: 14 }}>
+            <div className="coach-prompts">
               {[
                 'Help me build a simple routine',
                 'How should I progress my squat?',
                 'Make today’s workout shorter',
               ].map((q) => (
-                <button className="pill" key={q} onClick={() => setChatText(q)}>
+                <button className="coach-prompt" key={q} onClick={() => setChatText(q)}>
                   {q}
                 </button>
               ))}
@@ -2700,26 +2611,20 @@ function CoachScreen({
         {data.messages.map((m: any) => (
           <div
             key={m.id}
-            className="card card-pad"
+            className={`card card-pad coach-message ${m.role === 'user' ? 'coach-message-user' : 'coach-message-assistant'}`}
             style={{
               maxWidth: '90%',
               justifySelf: m.role === 'user' ? 'end' : 'start',
-              background: m.role === 'user' ? 'var(--blue)' : 'white',
-              color: m.role === 'user' ? 'white' : 'var(--text)',
-              borderColor: m.role === 'user' ? 'var(--blue)' : 'var(--border)',
             }}
           >
-            <div
-              className="eyebrow"
-              style={{ color: m.role === 'user' ? '#dbe6ff' : 'var(--purple)' }}
-            >
+            <div className={`eyebrow ${m.role === 'user' ? '' : 'coach-origin'}`}>
               {m.role === 'user' ? 'You' : 'Coach'}
             </div>
             <div className="multiline" style={{ marginTop: 7 }}>
               {m.text}
             </div>
             {m.evidenceIds?.length > 0 && (
-              <details style={{ marginTop: 12, color: m.role === 'user' ? 'white' : 'var(--sub)' }}>
+              <details style={{ marginTop: 12, color: 'var(--sub)' }}>
                 <summary className="small" style={{ cursor: 'pointer' }}>
                   Evidence and limitations
                 </summary>
@@ -2842,14 +2747,9 @@ function SettingsScreen({
       </div>
       <div className="grid two-col">
         <section className="card card-pad">
-          <div className="row">
-            <div className="routine-icon">
-              <Activity />
-            </div>
-            <div>
-              <h2 style={{ marginBottom: 2 }}>Training profile</h2>
-              <div className="muted small">Used to personalize Coach context.</div>
-            </div>
+          <div>
+            <h2 style={{ marginBottom: 2 }}>Training profile</h2>
+            <div className="muted small">Used to personalize Coach context.</div>
           </div>
           <div className="stack" style={{ marginTop: 17 }}>
             {Object.entries(data.settings.profile)
@@ -2881,14 +2781,9 @@ function SettingsScreen({
           </div>
         </section>
         <section className="card card-pad">
-          <div className="row">
-            <div className="routine-icon">
-              <FileDown />
-            </div>
-            <div>
-              <h2 style={{ marginBottom: 2 }}>Backup and restore</h2>
-              <div className="muted small">Keep a portable copy of your training data.</div>
-            </div>
+          <div>
+            <h2 style={{ marginBottom: 2 }}>Backup and restore</h2>
+            <div className="muted small">Keep a portable copy of your training data.</div>
           </div>
           <div className="stack" style={{ marginTop: 18 }}>
             <Button variant="primary" onClick={() => void exportBackup()}>

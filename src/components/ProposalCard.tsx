@@ -120,14 +120,12 @@ export function ProposalCard({ proposal, data, selected, setSelected, apply, rej
       <div className="row space-between">
         <div>
           <span
-            className={proposal.origin === 'progression' ? 'pill pill-blue' : 'pill pill-purple'}
+            className={`proposal-origin ${proposal.origin === 'progression' ? 'proposal-origin-progression' : 'proposal-origin-coach'}`}
           >
-            {proposal.origin === 'progression' ? <Activity size={12} /> : <Sparkles size={12} />}{' '}
+            {proposal.origin === 'progression' ? <Activity size={14} /> : <Sparkles size={14} />}{' '}
             {proposal.origin === 'progression' ? 'Progression suggestion' : 'Coach proposal'}
           </span>
-          <span className="pill" style={{ marginLeft: 6 }}>
-            {scopeLabel(proposal.scope)}
-          </span>
+          <span className="proposal-scope">{scopeLabel(proposal.scope)}</span>
         </div>
         <span className="small muted">Review each change</span>
       </div>
@@ -190,11 +188,7 @@ export function ProposalCard({ proposal, data, selected, setSelected, apply, rej
           <X size={14} />
           Dismiss
         </Button>
-        <Button
-          variant={proposal.origin === 'progression' ? 'secondary' : 'ai'}
-          disabled={!selected.length}
-          onClick={apply}
-        >
+        <Button variant="secondary" disabled={!selected.length} onClick={apply}>
           <Check size={15} />
           {proposal.routineDraft
             ? 'Open routine editor'

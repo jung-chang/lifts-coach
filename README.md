@@ -4,6 +4,8 @@ A personal, mobile-first workout tracker with a context-aware Coach. The user ap
 
 The client uses React, TypeScript, Vite, Tailwind and local shadcn-style Radix components. Active workouts and the durable synchronization queue live in IndexedDB through Dexie. The Hono Worker stores a revisioned personal document in D1 using Drizzle; Vercel AI SDK connects only to provisioned server-side providers. This is a single-user, single-active-device application.
 
+The current interface follows the owner's Maia/Olive/Yellow redesign request, with self-hosted Geist typography. This visual override is recorded in [the design system](docs/design-system.md); the protected original specification remains unchanged.
+
 ## Development
 
 Use Node 24+ and pnpm 10.33.0:
@@ -103,4 +105,4 @@ node scripts/test-worker.mjs
 
 ## License
 
-MIT. Exercise descriptions and evidence summaries are original concise text with traceable references; linked publications retain their own copyright.
+MIT. Exercise descriptions and evidence summaries are original concise text with traceable references; linked publications retain their own copyright. Geist fonts are distributed under the SIL Open Font License, included in [the font license](public/geist-font-license.txt).
