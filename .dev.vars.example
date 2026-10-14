@@ -1,0 +1,6 @@
+# Copy to .dev.vars for local Worker development only. Never commit real secrets.
+LOCAL_DEV=true
+# OPENAI_API_KEY=
+# ANTHROPIC_API_KEY=
+# ACCESS_TEAM_DOMAIN=your-team.cloudflareaccess.com
+# ACCESS_AUD=your-access-application-audience

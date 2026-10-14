@@ -1,0 +1,6 @@
+fitness_app_product_spec.md
+node_modules/
+.pnpm-store/
+dist/
+.wrangler/
+pnpm-lock.yaml

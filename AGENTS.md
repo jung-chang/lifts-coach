@@ -38,4 +38,3 @@ Run the pinned Node/pnpm toolchain, `pnpm test` and `pnpm build` before publishi
 Deploy from successful pushes to `main` through GitHub Actions only when account, D1 and Access configuration and deployment secrets are provisioned. Keep preview resources isolated from production. Protect personal deployments with an owner-restricted Cloudflare Access policy, and keep backend authentication fail-closed. Do not claim real deployment, phone installation or live-provider validation unless actually observed.
 
 Use original exercise instructions and manually curated evidence summaries. Verify primary sources, record applicability and limitations, and avoid copied papers or unlicensed assets.
-

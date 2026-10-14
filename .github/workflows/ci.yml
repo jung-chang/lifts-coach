@@ -1,0 +1,75 @@
+name: Check and deploy
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: lifts-coach-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:public
+      - run: pnpm test
+      - run: pnpm build
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check deployment configuration
+        id: configuration
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+          ACCESS_TEAM_DOMAIN: ${{ vars.ACCESS_TEAM_DOMAIN }}
+          ACCESS_AUD: ${{ vars.ACCESS_AUD }}
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { deploymentInputs } from './scripts/configure-cloudflare.mjs';
+          let ready = false;
+          try { deploymentInputs(process.env); ready = Boolean(process.env.CLOUDFLARE_API_TOKEN && process.env.CLOUDFLARE_ACCOUNT_ID); } catch {}
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `ready=${ready}\n`);
+          if (!ready) console.log('::notice::Deployment skipped: configure Cloudflare GitHub secrets and the D1_DATABASE_ID, ACCESS_TEAM_DOMAIN, ACCESS_AUD GitHub variables. Checks still run normally.');
+          NODE
+      - uses: pnpm/action-setup@v4
+        if: steps.configuration.outputs.ready == 'true'
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        if: steps.configuration.outputs.ready == 'true'
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        if: steps.configuration.outputs.ready == 'true'
+      - run: pnpm build
+        if: steps.configuration.outputs.ready == 'true'
+      - name: Migrate and deploy
+        if: steps.configuration.outputs.ready == 'true'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          D1_DATABASE_ID: ${{ vars.D1_DATABASE_ID }}
+          ACCESS_TEAM_DOMAIN: ${{ vars.ACCESS_TEAM_DOMAIN }}
+          ACCESS_AUD: ${{ vars.ACCESS_AUD }}
+        run: |
+          pnpm cloudflare:configure
+          pnpm exec wrangler d1 migrations apply lifts-coach --remote --config wrangler.deploy.json
+          pnpm exec wrangler deploy --config wrangler.deploy.json
