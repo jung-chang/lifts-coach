@@ -220,6 +220,10 @@ export function useAppStore() {
   return {
     ...value,
     update,
+    retrySync: async () => {
+      await initialize();
+      await connectRemote();
+    },
     resolveConflict: async (choice: 'local' | 'remote') =>
       runMutation(async () => {
         const conflict = snapshot.conflict;

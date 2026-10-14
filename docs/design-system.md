@@ -20,6 +20,16 @@ The active set remains the primary interface. Keep the completion action visible
 
 Progress puts exercise strength and consistency first. Coach looks like a focused conversation, with quiet contextual actions and inspectable approvals. Routine editing and proposals share the same visual controls.
 
+## Routine editing and contextual controls
+
+The owner's later usability request makes routine creation and editing a full-page Train sub-screen at every width. Its dedicated Back/title/Save header replaces the global navigation while editing. Manual and Coach routines use the same staged draft; exercise, custom-exercise and increment changes persist together only on Save. Leaving a changed draft requires a discard decision, including browser Back. Opening an untouched new draft does not prompt. An active workout stays intact and remains reachable through its mini-player.
+
+Swipe an exercise row to the right to reveal its removal action; a full right swipe requests confirmation. The explicit visible Remove button and keyboard shortcuts provide alternatives. Only “Yes, remove” changes the draft; Cancel preserves it, and the stored routine changes only after Save. This owner-requested confirmation overrides the previous immediate routine-item removal behavior without adding confirmation to ordinary workout logging.
+
+Pickers, exercise context, corrections and confirmations use full-width bottom drawers on phones and centered panels on desktop. Settings separates General, Profile and Coach, with a reachable Data & sync page for backup, restore, status and explicit conflict resolution. Coach starts with three concise optional prompts; evidence and approval details remain inspectable.
+
+Responsive controls favor readable values over squeezing fields beside step buttons. Mobile load/repetition values occupy the full width above their 44px step controls. Dense set tables pan inside their own container rather than expanding the page. Coach reserves space for navigation and the active-session mini-player while its conversation scrolls above the composer.
+
 ## Semantics and boundaries
 
 Green `#347A55` confirms completed sets; muted red `#B64E45` identifies destructive/reject actions. AI uses a restrained violet icon/label `#685781`, not purple surfaces. Pending Coach proposals identify their origin explicitly. Deterministic progression uses olive/yellow neutrals and never AI branding. Do not recolor every region or muscle group.

@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Activity,
-  ArrowDown,
   ArrowLeft,
   ArrowRight,
-  ArrowUp,
   BarChart3,
   Check,
   CheckCircle2,
   ChevronDown,
   Clock3,
   Dumbbell,
+  ArrowDown,
+  ArrowUp,
   FileDown,
   FileUp,
   History,
@@ -19,19 +19,13 @@ import {
   Play,
   Plus,
   RotateCcw,
-  Search,
   Settings as SettingsIcon,
   SkipForward,
   Sparkles,
-  Trash2,
   Undo2,
   X,
 } from 'lucide-react';
 import {
-  addRoutine,
-  editRoutine,
-  applyEdits,
-  addCustomExercise,
   startWorkout,
   repeatWorkout,
   completeSet,
@@ -44,7 +38,6 @@ import {
   toDisplayWeight,
   fromDisplayWeight,
   id,
-  proposalFingerprint,
   replaceWorkoutExercise,
 } from '../shared/domain';
 import { catalog } from '../shared/catalog';
@@ -57,12 +50,21 @@ import type {
   Workout,
   WorkoutExercise,
   WorkoutSet,
-  TrainingEdit,
 } from '../shared/types';
 import { useAppStore } from './lib/store';
 import { Button } from './components/ui/Button';
-import { Dialog } from './components/ui/Dialog';
+import { Sheet as Dialog } from './components/ui/Sheet';
 import { ProposalCard } from './components/ProposalCard';
+import { Sheet } from './components/ui/Sheet';
+import { RoutineEditor } from './components/RoutineEditor';
+import {
+  applyInspectedRoutineProposal,
+  commitRoutineDraft,
+  createRoutineDraft,
+  hasRoutineDraftChanges,
+  type RoutineDraft,
+} from './lib/routineDraft';
+import { listenForRoutineEditorBack, pushRoutineEditorHistory } from './lib/editorNavigation';
 
 type Tab = 'train' | 'progress' | 'coach' | 'settings';
 const allExercises = (data: AppData) => [...catalog, ...data.exercises];
@@ -101,18 +103,21 @@ function App() {
   const data = store.data;
   const [tab, setTab] = useState<Tab>('train');
   const [modal, setModal] = useState('');
-  const [selectedRoutine, setSelectedRoutine] = useState<string | null>(null);
-  const [draftProposalId, setDraftProposalId] = useState<string | null>(null);
-  const [draftRoutine, setDraftRoutine] = useState<Routine | null>(null);
-  const [routineName, setRoutineName] = useState('');
-  const [exerciseSearch, setExerciseSearch] = useState('');
-  const [custom, setCustom] = useState(false);
+  const [editorDraft, setEditorDraft] = useState<RoutineDraft | null>(null);
+  const [editorVisible, setEditorVisible] = useState(false);
+  const [editorName, setEditorName] = useState('');
+  const [editorReturnTab, setEditorReturnTab] = useState<Tab>('train');
+  const [discardRequested, setDiscardRequested] = useState(false);
+  const [leaveEditorToWorkout, setLeaveEditorToWorkout] = useState(false);
+  const editorBackCleanup = useRef<(() => void) | null>(null);
   const [notice, setNotice] = useState('');
   const [workoutId, setWorkoutId] = useState<string | null>(null);
   const [currentEx, setCurrentEx] = useState(0);
   const [showTable, setShowTable] = useState(false);
   const [undo, setUndo] = useState<{ data: AppData; label: string } | null>(null);
   const [profileDraft, setProfileDraft] = useState<any>(null);
+  const [settingsTab, setSettingsTab] = useState<'general' | 'profile' | 'coach'>('general');
+  const [settingsReturnTab, setSettingsReturnTab] = useState<Tab>('train');
   const [availableProviders, setAvailableProviders] = useState<{ id: string; models: string[] }[]>(
     [],
   );
@@ -145,9 +150,6 @@ function App() {
   });
   const active = data?.workouts.find((w: Workout) => w.status === 'active');
   const workout = data?.workouts.find((w: Workout) => w.id === (workoutId || active?.id));
-  const routine =
-    draftRoutine ||
-    (selectedRoutine ? data?.routines.find((r: Routine) => r.id === selectedRoutine) : undefined);
   useEffect(() => {
     if (active && !workoutId) {
       setWorkoutId(active.id);
@@ -212,137 +214,103 @@ function App() {
       say((e as Error).message);
     }
   };
+  const closeEditor = () => {
+    const consumeEditorEntry = window.history.state?.routineEditor;
+    // Programmatic Save/discard exits must stop the dirty browser-Back guard
+    // before history.back dispatches; effect cleanup can happen too late.
+    editorBackCleanup.current?.();
+    editorBackCleanup.current = null;
+    setEditorDraft(null);
+    setEditorVisible(false);
+    setDiscardRequested(false);
+    setTab(editorReturnTab);
+    if (consumeEditorEntry) window.history.back();
+  };
+  const requestEditorExit = (resumeWorkout = false) => {
+    setLeaveEditorToWorkout(resumeWorkout);
+    if (editorDraft && hasRoutineDraftChanges(editorDraft, editorName)) setDiscardRequested(true);
+    else {
+      closeEditor();
+      if (resumeWorkout && active) {
+        setWorkoutId(active.id);
+        setTab('train');
+      }
+    }
+  };
+  useEffect(() => {
+    if (!editorDraft || !editorVisible) return;
+    const unlisten = listenForRoutineEditorBack({
+      isDirty: () => hasRoutineDraftChanges(editorDraft, editorName),
+      onDiscardRequest: () => setDiscardRequested(true),
+      onCleanBack: closeEditor,
+    });
+    editorBackCleanup.current = unlisten;
+    return () => {
+      unlisten();
+      if (editorBackCleanup.current === unlisten) editorBackCleanup.current = null;
+    };
+  }, [editorDraft, editorVisible, editorName, editorReturnTab]);
+  const openDraftEditor = (proposal: Proposal) => {
+    if (!proposal.routineDraft) return;
+    if (editorDraft && hasRoutineDraftChanges(editorDraft, editorName)) {
+      setChatError('Save or discard your current draft before reviewing another routine.');
+      return;
+    }
+    const draft = createRoutineDraft(undefined, proposal.id);
+    draft.routine = structuredClone(proposal.routineDraft);
+    draft.initialDraftFingerprint = JSON.stringify(draft.routine);
+    setEditorDraft(draft);
+    setEditorVisible(true);
+    setEditorName(draft.routine.name);
+    if (!editorDraft) setEditorReturnTab(tab);
+    setModal('');
+    if (!editorDraft) pushRoutineEditorHistory();
+  };
+  const openRoutine = (r?: Routine) => {
+    if (editorDraft && hasRoutineDraftChanges(editorDraft, editorName)) {
+      setChatError('Save or discard your current draft before opening another routine.');
+      return;
+    }
+    const draft = createRoutineDraft(r);
+    setEditorDraft(draft);
+    setEditorVisible(true);
+    setEditorName(r?.name || '');
+    if (!editorDraft) setEditorReturnTab(tab);
+    setModal('');
+    if (!editorDraft) pushRoutineEditorHistory();
+  };
   const saveRoutine = () => {
-    if (!data) return;
+    if (!data || !editorDraft) return;
     try {
-      if (draftProposalId && draftRoutine) {
-        const proposalId = draftProposalId;
-        const saved = structuredClone(draftRoutine);
-        saved.name = routineName.trim() || saved.name;
-        saved.updatedAt = new Date().toISOString();
+      if (editorDraft.proposalId) {
+        const proposalId = editorDraft.proposalId;
+        const saved = {
+          ...structuredClone(editorDraft.routine),
+          name: editorName.trim(),
+          updatedAt: new Date().toISOString(),
+        };
         void safeUpdate((d) => {
-          const proposal = d.proposals.find((p) => p.id === proposalId);
-          if (!proposal) throw new Error('This proposal is no longer available');
-          const updated = { ...proposal, routineDraft: saved, edits: [] } as Proposal;
-          updated.targetFingerprint = proposalFingerprint(d, updated);
-          const withDraft = {
-            ...d,
-            proposals: d.proposals.map((p) => (p.id === proposalId ? updated : p)),
-          };
-          return applyProposal(withDraft, proposalId, [0]);
+          return applyInspectedRoutineProposal(
+            d,
+            proposalId,
+            saved,
+            editorDraft.customExercises,
+            editorDraft.increments,
+          );
         }).then((ok) => {
           if (ok) {
-            setModal('');
-            setDraftProposalId(null);
-            setDraftRoutine(null);
+            closeEditor();
             say('Routine draft reviewed and saved');
           }
         });
-      } else if (selectedRoutine) {
-        void safeUpdate((d) => ({
-          ...d,
-          routines: d.routines.map((x) =>
-            x.id === selectedRoutine
-              ? { ...x, name: routineName.trim() || x.name, updatedAt: new Date().toISOString() }
-              : x,
-          ),
-        }));
-        setModal('');
-        say('Routine saved');
       } else {
-        let createdId = '';
-        void safeUpdate((d) => {
-          const next = addRoutine(d, routineName || 'New routine');
-          createdId = next.routines[next.routines.length - 1].id;
-          return next;
-        }).then(() => {
-          setSelectedRoutine(createdId);
-          setRoutineName(routineName || 'New routine');
-          setExerciseSearch('');
-          setModal('routine');
+        void safeUpdate((d) => commitRoutineDraft(d, editorDraft, editorName)).then((ok) => {
+          if (ok) {
+            closeEditor();
+            say('Routine saved');
+          }
         });
-        say('Routine created');
       }
-    } catch (e) {
-      say((e as Error).message);
-    }
-  };
-  const openDraftEditor = (proposal: Proposal) => {
-    if (!proposal.routineDraft) return;
-    setDraftProposalId(proposal.id);
-    setDraftRoutine(structuredClone(proposal.routineDraft));
-    setSelectedRoutine(null);
-    setRoutineName(proposal.routineDraft.name);
-    setExerciseSearch('');
-    setModal('routine');
-  };
-  const openRoutine = (r?: Routine) => {
-    setDraftProposalId(null);
-    setDraftRoutine(null);
-    setSelectedRoutine(r?.id || null);
-    setRoutineName(r?.name || '');
-    setExerciseSearch('');
-    setModal('routine');
-  };
-  const applyRoutineEdits = (routineId: string, edits: TrainingEdit[]) => {
-    if (draftRoutine && draftProposalId) {
-      setDraftRoutine((prev) =>
-        prev
-          ? {
-              ...prev,
-              exercises: applyEdits(prev.exercises, edits, allExercises(data!)),
-              updatedAt: new Date().toISOString(),
-            }
-          : prev,
-      );
-      return;
-    }
-    void safeUpdate((d) => editRoutine(d, routineId, edits));
-  };
-  const addExerciseToRoutine = (ex: Exercise) => {
-    if (!data || !routine) return;
-    try {
-      applyRoutineEdits(routine.id, [
-        { op: 'add_exercise', exerciseId: ex.id, sets: 3, repRange: [8, 12] },
-      ]);
-      say(`${ex.name} added`);
-    } catch (e) {
-      say((e as Error).message);
-    }
-  };
-  const removePrescription = (routineId: string, prescriptionId: string) => {
-    if (!data) return;
-    try {
-      applyRoutineEdits(routineId, [{ op: 'remove_exercise', exerciseId: prescriptionId }]);
-      say('Exercise removed');
-    } catch (e) {
-      say((e as Error).message);
-    }
-  };
-  const updatePrescription = (
-    routineId: string,
-    prescriptionId: string,
-    field: 'sets' | 'low' | 'high' | 'weight' | 'rest',
-    value: number,
-  ) => {
-    if (!data) return;
-    const p = routine?.exercises.find((x: any) => x.id === prescriptionId);
-    if (!p) return;
-    const edit: TrainingEdit = {
-      op: 'update_exercise',
-      exerciseId: prescriptionId,
-      ...(field === 'sets'
-        ? { sets: value }
-        : field === 'low'
-          ? { repRange: [value, Math.max(value, p.repRange[1])] }
-          : field === 'high'
-            ? { repRange: [Math.min(value, p.repRange[0]), value] }
-            : field === 'weight'
-              ? { targetWeight: fromDisplayWeight(value, data.settings.unit) }
-              : { restSeconds: value }),
-    };
-    try {
-      applyRoutineEdits(routineId, [edit]);
     } catch (e) {
       say((e as Error).message);
     }
@@ -498,58 +466,6 @@ function App() {
       }
     });
   };
-  const addCustom = () => {
-    if (!data) return;
-    try {
-      const ex: Exercise = {
-        id: id('custom'),
-        name: newExercise.name || '',
-        muscles: (newExercise.muscles as string[]) || [],
-        equipment: newExercise.equipment || '',
-        instructions: newExercise.instructions || '',
-        loadMode: (newExercise.loadMode as any) || 'external',
-        region: (newExercise.region as any) || 'upper',
-        custom: true,
-      };
-      void safeUpdate((d) => {
-        const withExercise = addCustomExercise(d, ex);
-        return selectedRoutine
-          ? editRoutine(
-              withExercise,
-              selectedRoutine,
-              [{ op: 'add_exercise', exerciseId: ex.id, sets: 3, repRange: [8, 12] }],
-              routineName,
-            )
-          : withExercise;
-      }).then((ok) => {
-        if (ok && draftRoutine && draftProposalId)
-          setDraftRoutine((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  exercises: applyEdits(
-                    prev.exercises,
-                    [{ op: 'add_exercise', exerciseId: ex.id, sets: 3, repRange: [8, 12] }],
-                    [...allExercises(data), ex],
-                  ),
-                }
-              : prev,
-          );
-      });
-      setNewExercise({
-        name: '',
-        muscles: [],
-        equipment: '',
-        instructions: '',
-        loadMode: 'external',
-        region: 'upper',
-      });
-      setCustom(false);
-      say(routine ? 'Custom exercise added to routine' : 'Custom exercise created');
-    } catch (e) {
-      say((e as Error).message);
-    }
-  };
   const saveProfile = () => {
     if (!data || !profileDraft) return;
     void safeUpdate((d) => ({
@@ -644,11 +560,14 @@ function App() {
         </main>
       </div>
     );
-  const viewedWorkout = !!workout && workout.status === 'active' && tab === 'train';
-  const showMini = !!active && tab !== 'train';
+  const viewedWorkout =
+    !!workout && workout.status === 'active' && tab === 'train' && !editorVisible;
+  const showMini = !!active && (tab !== 'train' || editorVisible);
 
   return (
-    <div className={`app-shell${showMini ? ' has-active-session' : ''}`}>
+    <div
+      className={`app-shell${showMini ? ' has-active-session' : ''}${editorVisible ? ' is-routine-editor' : ''}`}
+    >
       <header className="topbar">
         <div className="brand">Lifts Coach</div>
         <div className="top-actions">
@@ -672,6 +591,7 @@ function App() {
             aria-label="Settings"
             onClick={() => {
               setProfileDraft(structuredClone(data.settings));
+              setSettingsTab('general');
               setModal('settings');
             }}
           >
@@ -679,234 +599,270 @@ function App() {
           </Button>
         </div>
       </header>
-      {tab === 'train' && (
-        <main className="page">
-          {!viewedWorkout ? (
-            data.routines.length === 0 ? (
-              <div className="card card-pad first-run-card">
-                <div className="eyebrow">Train</div>
-                <h1>Start with a routine</h1>
-                <p className="muted">
-                  Create a plan that fits your training, or ask Coach to help shape one.
-                </p>
-                <div className="row first-run-actions">
-                  <Button variant="primary" size="lg" onClick={() => openRoutine()}>
-                    <Plus size={19} /> Create routine
-                  </Button>
-                  <Button variant="ai" onClick={() => openCoach({}, false)}>
-                    <Sparkles size={17} /> Ask Coach to create one
-                  </Button>
-                </div>
-              </div>
-            ) : (
-              <>
-                {(() => {
-                  const next =
-                    data.routines[data.settings.rotationIndex % data.routines.length] ||
-                    data.routines[0];
-                  return (
-                    <div className="dashboard-grid">
-                      <section className="card card-pad next-session-card">
-                        {active ? (
-                          <>
-                            <div className="eyebrow">Workout in progress</div>
-                            <h1>{active.name}</h1>
-                            <p className="muted session-summary">
-                              {completedSets(active)} of {totalSets(active)} sets <span>·</span>{' '}
-                              {duration(active.startedAt)} min
-                            </p>
-                          </>
-                        ) : (
-                          <>
-                            <div className="eyebrow">Up next</div>
-                            <h1>{next.name}</h1>
-                            <p className="muted session-summary">
-                              {next.exercises.length} exercises <span>·</span>{' '}
-                              {next.exercises.reduce((a, e) => a + e.sets, 0)} sets <span>·</span>{' '}
-                              {Math.max(
-                                10,
-                                Math.round(
-                                  next.exercises.reduce(
-                                    (a, e) => a + e.sets * (e.restSeconds + 35),
-                                    0,
-                                  ) / 60,
-                                ),
-                              )}{' '}
-                              min
-                            </p>
-                            <p className="muted small session-exercises">
-                              {next.exercises
-                                .slice(0, 3)
-                                .map((p) => exerciseById(p.exerciseId)?.name || p.exerciseId)
-                                .join(' · ')}
-                              {next.exercises.length > 3 ? ' · …' : ''}
-                            </p>
-                          </>
-                        )}
-                        <Button
-                          variant="primary"
-                          size="lg"
-                          className="session-start"
-                          onClick={() => {
-                            if (active) {
-                              setWorkoutId(active.id);
-                              setTab('train');
-                            } else start(next.id);
-                          }}
-                          disabled={!active && !next.exercises.length}
-                        >
-                          <Play size={18} fill="currentColor" />{' '}
-                          {active ? 'Resume workout' : 'Start workout'}
-                        </Button>
-                      </section>
-                      <section className="routine-panel">
-                        <div className="section-title">
-                          <h2>Saved routines</h2>
-                          <Button variant="ghost" size="sm" onClick={() => openRoutine()}>
-                            <Plus size={15} /> New
-                          </Button>
-                        </div>
-                        <div className="routine-list">
-                          {data.routines.map((r, i) => (
-                            <div className="routine-row" key={r.id}>
-                              <button className="routine-row-main" onClick={() => openRoutine(r)}>
-                                <span className="routine-row-name">{r.name}</span>
-                                <span className="muted small">
-                                  {r.exercises.length} exercises ·{' '}
-                                  {r.exercises.reduce((a, e) => a + e.sets, 0)} sets
-                                  {i === data.settings.rotationIndex % data.routines.length
-                                    ? ' · Up next'
-                                    : ''}
-                                </span>
-                              </button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                aria-label={`Start ${r.name}`}
-                                onClick={() => start(r.id)}
-                                disabled={!r.exercises.length}
-                              >
-                                <Play size={16} />
+      {editorVisible && editorDraft ? (
+        <RoutineEditor
+          data={data}
+          draft={editorDraft}
+          setDraft={setEditorDraft}
+          name={editorName}
+          setName={setEditorName}
+          onBack={requestEditorExit}
+          onSave={saveRoutine}
+          onAskCoach={() => {
+            setContext({});
+            setChatText(
+              `Help improve this unsaved routine draft: ${editorName || 'New routine'}\nExercises: ${editorDraft.routine.exercises.map((p) => allExercises(data).find((e) => e.id === p.exerciseId)?.name || p.exerciseId).join(', ') || 'none yet'}`,
+            );
+            setChatError('');
+            setModal('coach-sheet');
+          }}
+        />
+      ) : (
+        <>
+          {tab === 'train' && (
+            <main className="page">
+              {!viewedWorkout ? (
+                data.routines.length === 0 ? (
+                  <div className="card card-pad first-run-card">
+                    <div className="eyebrow">Train</div>
+                    <h1>Start with a routine</h1>
+                    <p className="muted">
+                      Create a plan that fits your training, or ask Coach to help shape one.
+                    </p>
+                    <div className="row first-run-actions">
+                      <Button variant="primary" size="lg" onClick={() => openRoutine()}>
+                        <Plus size={19} /> Create routine
+                      </Button>
+                      <Button variant="ai" onClick={() => openCoach({}, false)}>
+                        <Sparkles size={17} /> Ask Coach to create one
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {(() => {
+                      const next =
+                        data.routines[data.settings.rotationIndex % data.routines.length] ||
+                        data.routines[0];
+                      return (
+                        <div className="dashboard-grid">
+                          <section className="card card-pad next-session-card">
+                            {active ? (
+                              <>
+                                <div className="eyebrow">Workout in progress</div>
+                                <h1>{active.name}</h1>
+                                <p className="muted session-summary">
+                                  {completedSets(active)} of {totalSets(active)} sets <span>·</span>{' '}
+                                  {duration(active.startedAt)} min
+                                </p>
+                              </>
+                            ) : (
+                              <>
+                                <div className="eyebrow">Up next</div>
+                                <h1>{next.name}</h1>
+                                <p className="muted session-summary">
+                                  {next.exercises.length} exercises <span>·</span>{' '}
+                                  {next.exercises.reduce((a, e) => a + e.sets, 0)} sets{' '}
+                                  <span>·</span>{' '}
+                                  {Math.max(
+                                    10,
+                                    Math.round(
+                                      next.exercises.reduce(
+                                        (a, e) => a + e.sets * (e.restSeconds + 35),
+                                        0,
+                                      ) / 60,
+                                    ),
+                                  )}{' '}
+                                  min
+                                </p>
+                                <p className="muted small session-exercises">
+                                  {next.exercises
+                                    .slice(0, 3)
+                                    .map((p) => exerciseById(p.exerciseId)?.name || p.exerciseId)
+                                    .join(' · ')}
+                                  {next.exercises.length > 3 ? ' · …' : ''}
+                                </p>
+                              </>
+                            )}
+                            <Button
+                              variant="primary"
+                              size="lg"
+                              className="session-start"
+                              onClick={() => {
+                                if (active) {
+                                  setWorkoutId(active.id);
+                                  setTab('train');
+                                } else start(next.id);
+                              }}
+                              disabled={!active && !next.exercises.length}
+                            >
+                              <Play size={18} fill="currentColor" />{' '}
+                              {active ? 'Resume workout' : 'Start workout'}
+                            </Button>
+                          </section>
+                          <section className="routine-panel">
+                            <div className="section-title">
+                              <h2>Saved routines</h2>
+                              <Button variant="ghost" size="sm" onClick={() => openRoutine()}>
+                                <Plus size={15} /> New
                               </Button>
                             </div>
-                          ))}
-                        </div>
-                      </section>
-                    </div>
-                  );
-                })()}
-                <section className="train-history">
-                  <div className="section-title">
-                    <h2>Recent workouts</h2>
-                    <Button size="sm" variant="ghost" onClick={() => setTab('progress')}>
-                      View history <ArrowRight size={15} />
-                    </Button>
-                  </div>
-                  {data.workouts.filter((w) => w.status === 'finished').length === 0 ? (
-                    <p className="muted small">Finished workouts will appear here.</p>
-                  ) : (
-                    data.workouts
-                      .filter((w) => w.status === 'finished')
-                      .slice()
-                      .reverse()
-                      .slice(0, 3)
-                      .map((w) => (
-                        <div className="history-item" key={w.id}>
-                          <div className="grow">
-                            <b>{w.name}</b>
-                            <div className="muted small">
-                              {dateLabel(w.startedAt)} · {duration(w.startedAt, w.completedAt)} min
-                              · {completedSets(w)} sets
+                            <div className="routine-list">
+                              {data.routines.map((r, i) => (
+                                <div className="routine-row" key={r.id}>
+                                  <button
+                                    className="routine-row-main"
+                                    onClick={() => openRoutine(r)}
+                                  >
+                                    <span className="routine-row-name">{r.name}</span>
+                                    <span className="muted small">
+                                      {r.exercises.length} exercises ·{' '}
+                                      {r.exercises.reduce((a, e) => a + e.sets, 0)} sets
+                                      {i === data.settings.rotationIndex % data.routines.length
+                                        ? ' · Up next'
+                                        : ''}
+                                    </span>
+                                  </button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label={`Start ${r.name}`}
+                                    onClick={() => start(r.id)}
+                                    disabled={!r.exercises.length}
+                                  >
+                                    <Play size={16} />
+                                  </Button>
+                                </div>
+                              ))}
                             </div>
-                          </div>
-                          <Button size="sm" variant="secondary" onClick={() => repeat(w.id)}>
-                            <RotateCcw size={15} /> Repeat
-                          </Button>
+                          </section>
                         </div>
-                      ))
-                  )}
-                </section>
-              </>
-            )
-          ) : (
-            <WorkoutScreen
+                      );
+                    })()}
+                    <section className="train-history">
+                      <div className="section-title">
+                        <h2>Recent workouts</h2>
+                        <Button size="sm" variant="ghost" onClick={() => setTab('progress')}>
+                          View history <ArrowRight size={15} />
+                        </Button>
+                      </div>
+                      {data.workouts.filter((w) => w.status === 'finished').length === 0 ? (
+                        <p className="muted small">Finished workouts will appear here.</p>
+                      ) : (
+                        data.workouts
+                          .filter((w) => w.status === 'finished')
+                          .slice()
+                          .reverse()
+                          .slice(0, 3)
+                          .map((w) => (
+                            <div className="history-item" key={w.id}>
+                              <div className="grow">
+                                <b>{w.name}</b>
+                                <div className="muted small">
+                                  {dateLabel(w.startedAt)} · {duration(w.startedAt, w.completedAt)}{' '}
+                                  min · {completedSets(w)} sets
+                                </div>
+                              </div>
+                              <Button size="sm" variant="secondary" onClick={() => repeat(w.id)}>
+                                <RotateCcw size={15} /> Repeat
+                              </Button>
+                            </div>
+                          ))
+                      )}
+                    </section>
+                  </>
+                )
+              ) : (
+                <WorkoutScreen
+                  data={data}
+                  workout={workout!}
+                  currentEx={currentEx}
+                  setCurrentEx={setCurrentEx}
+                  showTable={showTable}
+                  setShowTable={setShowTable}
+                  activeExercise={activeExercise}
+                  activeSet={activeSet}
+                  logSet={logActiveSet}
+                  editSet={editSet}
+                  setState={setState}
+                  timerNow={timerNow}
+                  skipRest={skipRest}
+                  finish={finish}
+                  onCoach={() =>
+                    openCoach(
+                      { workoutId: workout!.id, exerciseId: activeExercise?.exerciseId },
+                      true,
+                    )
+                  }
+                  setUndo={undoLast}
+                  undo={undo}
+                  say={say}
+                  mutate={mutate}
+                />
+              )}
+            </main>
+          )}
+          {tab === 'progress' && (
+            <ProgressScreen
               data={data}
-              workout={workout!}
-              currentEx={currentEx}
-              setCurrentEx={setCurrentEx}
-              showTable={showTable}
-              setShowTable={setShowTable}
-              activeExercise={activeExercise}
-              activeSet={activeSet}
-              logSet={logActiveSet}
-              editSet={editSet}
-              setState={setState}
-              timerNow={timerNow}
-              skipRest={skipRest}
-              finish={finish}
-              onCoach={() =>
-                openCoach({ workoutId: workout!.id, exerciseId: activeExercise?.exerciseId }, true)
+              onCoach={() => openCoach()}
+              onRepeat={repeat}
+              onCorrection={(w: Workout, e: WorkoutExercise) =>
+                setCorrection({ workout: w, exercise: e })
               }
-              setUndo={undoLast}
-              undo={undo}
-              say={say}
-              mutate={mutate}
+              proposals={data.proposals.filter(
+                (p: Proposal) => p.status === 'pending' && p.origin === 'progression',
+              )}
+              selection={proposalSelection}
+              setSelection={setProposalSelection}
+              apply={applyPending}
+              reject={(p: Proposal) => mutate((d) => rejectProposal(d, p.id))}
             />
           )}
-        </main>
-      )}
-      {tab === 'progress' && (
-        <ProgressScreen
-          data={data}
-          onCoach={() => openCoach()}
-          onRepeat={repeat}
-          onCorrection={(w: Workout, e: WorkoutExercise) =>
-            setCorrection({ workout: w, exercise: e })
-          }
-          proposals={data.proposals.filter(
-            (p: Proposal) => p.status === 'pending' && p.origin === 'progression',
+          {tab === 'coach' && (
+            <CoachScreen
+              data={data}
+              syncStatus={status}
+              chatText={chatText}
+              setChatText={setChatText}
+              submit={submitChat}
+              busy={chatBusy}
+              error={chatError}
+              proposals={data.proposals.filter((p: Proposal) => p.status === 'pending')}
+              selection={proposalSelection}
+              setSelection={setProposalSelection}
+              apply={applyPending}
+              reject={(p: Proposal) => mutate((d) => rejectProposal(d, p.id))}
+              openRoutine={openRoutine}
+            />
           )}
-          selection={proposalSelection}
-          setSelection={setProposalSelection}
-          apply={applyPending}
-          reject={(p: Proposal) => mutate((d) => rejectProposal(d, p.id))}
-        />
-      )}
-      {tab === 'coach' && (
-        <CoachScreen
-          data={data}
-          syncStatus={status}
-          chatText={chatText}
-          setChatText={setChatText}
-          submit={submitChat}
-          busy={chatBusy}
-          error={chatError}
-          proposals={data.proposals.filter((p: Proposal) => p.status === 'pending')}
-          selection={proposalSelection}
-          setSelection={setProposalSelection}
-          apply={applyPending}
-          reject={(p: Proposal) => mutate((d) => rejectProposal(d, p.id))}
-          openRoutine={openRoutine}
-        />
-      )}
-      {tab === 'settings' && (
-        <SettingsScreen
-          data={data}
-          status={status}
-          openSettings={() => {
-            setProfileDraft(structuredClone(data.settings));
-            setModal('settings');
-          }}
-          exportBackup={exportBackup}
-          importBackup={() => fileRef.current?.click()}
-          conflict={store.conflict}
-          resolveConflict={store.resolveConflict}
-        />
+          {tab === 'settings' && (
+            <SettingsScreen
+              data={data}
+              status={status}
+              openSettings={() => {
+                setProfileDraft(structuredClone(data.settings));
+                setSettingsTab('general');
+                setModal('settings');
+              }}
+              onBack={() => setTab(settingsReturnTab)}
+              exportBackup={exportBackup}
+              importBackup={() => fileRef.current?.click()}
+              conflict={store.conflict}
+              retrySync={store.retrySync}
+              resolveConflict={store.resolveConflict}
+            />
+          )}
+        </>
       )}
       {showMini && (
         <button
           className="mini-player"
           onClick={() => {
+            if (editorVisible) {
+              requestEditorExit(true);
+              return;
+            }
             setWorkoutId(active!.id);
             setTab('train');
           }}
@@ -920,25 +876,30 @@ function App() {
           <ArrowRight size={18} />
         </button>
       )}
-      <nav className="bottom-nav" aria-label="Main navigation">
-        {(
-          [
-            ['train', 'Train', Dumbbell],
-            ['progress', 'Progress', BarChart3],
-            ['coach', 'Coach', Sparkles],
-          ] as const
-        ).map(([key, label, Icon]) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`nav-button ${tab === key ? 'active' : ''}`}
-            aria-current={tab === key ? 'page' : undefined}
-          >
-            <Icon size={19} />
-            <span>{label}</span>
-          </button>
-        ))}
-      </nav>
+      {!editorVisible && (
+        <nav className="bottom-nav" aria-label="Main navigation">
+          {(
+            [
+              ['train', 'Train', Dumbbell],
+              ['progress', 'Progress', BarChart3],
+              ['coach', 'Coach', Sparkles],
+            ] as const
+          ).map(([key, label, Icon]) => (
+            <button
+              key={key}
+              onClick={() => {
+                setTab(key);
+                if (key === 'train' && editorDraft) setEditorVisible(true);
+              }}
+              className={`nav-button ${tab === key ? 'active' : ''}`}
+              aria-current={tab === key ? 'page' : undefined}
+            >
+              <Icon size={19} />
+              <span>{label}</span>
+            </button>
+          ))}
+        </nav>
+      )}
       {notice && (
         <div className="toast" role="status">
           <CheckCircle2 size={17} />
@@ -969,359 +930,30 @@ function App() {
           e.currentTarget.value = '';
         }}
       />
-      <Dialog
-        open={modal === 'routine'}
-        onOpenChange={(o) => !o && setModal('')}
-        title={
-          draftProposalId
-            ? 'Review Coach routine draft'
-            : selectedRoutine
-              ? 'Edit routine'
-              : 'Create routine'
-        }
-        description={
-          draftProposalId
-            ? 'Inspect and edit this proposed plan before saving it.'
-            : 'Your plan stays flexible. You can adjust it any time.'
-        }
+      <Sheet
+        open={discardRequested}
+        onOpenChange={(open) => !open && setDiscardRequested(false)}
+        title="Discard routine changes?"
+        description="Your routine draft and staged exercise changes will be discarded."
       >
-        <div className="stack">
-          <div className="form-field">
-            <label htmlFor="routine-name">Routine name</label>
-            <input
-              id="routine-name"
-              className="input"
-              value={routineName}
-              onChange={(e) => setRoutineName(e.target.value)}
-              placeholder="e.g. Full body A"
-            />
-          </div>
-          {routine && (
-            <>
-              <div className="divider" />
-              <div className="row space-between">
-                <div>
-                  <b>Exercises</b>
-                  <div className="muted small">Set targets or open an exercise to adjust it.</div>
-                </div>
-                <Button size="sm" variant="ai" onClick={() => openCoach({ routineId: routine.id })}>
-                  <Sparkles size={15} />
-                  Ask Coach
-                </Button>
-              </div>
-              <div className="routine-list routine-editor-list">
-                {routine.exercises.map((p, i) => {
-                  const ex = exerciseById(p.exerciseId);
-                  return (
-                    <div
-                      className="card routine-editor-item"
-                      key={p.id}
-                      style={{ padding: '12px 14px' }}
-                    >
-                      <div className="row">
-                        <span className="exercise-order">{String(i + 1).padStart(2, '0')}</span>
-                        <div className="grow">
-                          <b>{ex?.name || p.exerciseId}</b>
-                          <div className="muted small">
-                            {p.sets} × {p.repRange[0]}–{p.repRange[1]} ·{' '}
-                            {p.targetWeight
-                              ? `${toDisplayWeight(p.targetWeight, data.settings.unit)} ${data.settings.unit}`
-                              : 'No target weight'}
-                          </div>
-                        </div>
-                        <div className="routine-editor-actions">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`Move ${ex?.name} up`}
-                            disabled={i === 0}
-                            onClick={() => {
-                              const ids = routine.exercises.map((x) => x.id);
-                              [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
-                              applyRoutineEdits(routine.id, [
-                                { op: 'reorder_exercises', exerciseIds: ids },
-                              ]);
-                            }}
-                          >
-                            <ArrowUp size={16} />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label={`Move ${ex?.name} down`}
-                            disabled={i === routine.exercises.length - 1}
-                            onClick={() => {
-                              const ids = routine.exercises.map((x) => x.id);
-                              [ids[i + 1], ids[i]] = [ids[i], ids[i + 1]];
-                              applyRoutineEdits(routine.id, [
-                                { op: 'reorder_exercises', exerciseIds: ids },
-                              ]);
-                            }}
-                          >
-                            <ArrowDown size={16} />
-                          </Button>
-                          <button
-                            className="icon-button"
-                            aria-label={`Remove ${ex?.name}`}
-                            onClick={() => removePrescription(routine.id, p.id)}
-                          >
-                            <Trash2 size={17} />
-                          </button>
-                        </div>
-                      </div>
-                      <details style={{ marginTop: 9 }}>
-                        <summary
-                          className="small muted"
-                          style={{
-                            cursor: 'pointer',
-                            minHeight: 44,
-                            display: 'flex',
-                            alignItems: 'center',
-                          }}
-                        >
-                          Prescription and exercise options
-                        </summary>
-                        <div className="profile-grid" style={{ marginTop: 8 }}>
-                          {(
-                            [
-                              ['Sets', p.sets, 'sets', 1, 30],
-                              ['Min reps', p.repRange[0], 'low', 1, 100],
-                              ['Max reps', p.repRange[1], 'high', 1, 100],
-                              [
-                                'Target weight (' + data.settings.unit + ')',
-                                toDisplayWeight(p.targetWeight, data.settings.unit),
-                                'weight',
-                                0,
-                                2000,
-                              ],
-                              ['Rest (sec)', p.restSeconds, 'rest', 0, 3600],
-                            ] as const
-                          ).map(([label, value, field, min, max]) => (
-                            <div className="form-field" key={field}>
-                              <label>{label}</label>
-                              <input
-                                className="input input-sm"
-                                type="number"
-                                min={min}
-                                max={max}
-                                value={value}
-                                onChange={(e) =>
-                                  updatePrescription(
-                                    routine.id,
-                                    p.id,
-                                    field,
-                                    Number(e.target.value) || 0,
-                                  )
-                                }
-                              />
-                            </div>
-                          ))}
-                          <div className="form-field">
-                            <label htmlFor={`replace-${p.id}`}>Replace exercise</label>
-                            <select
-                              id={`replace-${p.id}`}
-                              className="select input-sm"
-                              value={p.exerciseId}
-                              onChange={(e) =>
-                                applyRoutineEdits(routine.id, [
-                                  {
-                                    op: 'replace_exercise',
-                                    exerciseId: p.id,
-                                    replacementId: e.target.value,
-                                  },
-                                ])
-                              }
-                            >
-                              {allExercises(data).map((item) => (
-                                <option key={item.id} value={item.id}>
-                                  {item.name}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                          <div className="form-field">
-                            <label htmlFor={`increment-${p.id}`}>
-                              Progress increment ({data.settings.unit})
-                            </label>
-                            <input
-                              id={`increment-${p.id}`}
-                              className="input input-sm"
-                              type="number"
-                              min="0"
-                              step="0.5"
-                              value={toDisplayWeight(
-                                data.settings.increments[p.exerciseId] ??
-                                  (ex?.region === 'lower' ? 10 : 5),
-                                data.settings.unit,
-                              )}
-                              onChange={(e) =>
-                                mutate(
-                                  (d: AppData) => ({
-                                    ...d,
-                                    settings: {
-                                      ...d.settings,
-                                      increments: {
-                                        ...d.settings.increments,
-                                        [p.exerciseId]: fromDisplayWeight(
-                                          Number(e.target.value) || 0,
-                                          d.settings.unit,
-                                        ),
-                                      },
-                                    },
-                                  }),
-                                  'Increment updated',
-                                )
-                              }
-                            />
-                          </div>
-                        </div>
-                      </details>
-                    </div>
-                  );
-                })}
-                {!routine.exercises.length && (
-                  <p className="muted small">Add your first exercise below.</p>
-                )}
-              </div>
-              <div className="search-wrap">
-                <Search size={17} />
-                <input
-                  className="input"
-                  value={exerciseSearch}
-                  onChange={(e) => setExerciseSearch(e.target.value)}
-                  placeholder="Search 100+ exercises"
-                  aria-label="Search exercises"
-                />
-              </div>
-              {custom ? (
-                <div className="stack">
-                  <div className="profile-grid">
-                    <div className="form-field">
-                      <label>Exercise name</label>
-                      <input
-                        className="input"
-                        value={newExercise.name}
-                        onChange={(e) => setNewExercise({ ...newExercise, name: e.target.value })}
-                      />
-                    </div>
-                    <div className="form-field">
-                      <label>Equipment</label>
-                      <input
-                        className="input"
-                        value={newExercise.equipment}
-                        onChange={(e) =>
-                          setNewExercise({ ...newExercise, equipment: e.target.value })
-                        }
-                      />
-                    </div>
-                    <div className="form-field">
-                      <label>Primary muscles</label>
-                      <input
-                        className="input"
-                        value={(newExercise.muscles || []).join(', ')}
-                        onChange={(e) =>
-                          setNewExercise({
-                            ...newExercise,
-                            muscles: e.target.value
-                              .split(',')
-                              .map((x) => x.trim())
-                              .filter(Boolean),
-                          })
-                        }
-                        placeholder="Chest, triceps"
-                      />
-                    </div>
-                    <div className="form-field">
-                      <label>Load type</label>
-                      <select
-                        className="select"
-                        value={newExercise.loadMode as string}
-                        onChange={(e) =>
-                          setNewExercise({ ...newExercise, loadMode: e.target.value as any })
-                        }
-                      >
-                        <option value="external">External load</option>
-                        <option value="per-dumbbell">Per dumbbell</option>
-                        <option value="bodyweight">Bodyweight</option>
-                        <option value="assistance">Assistance</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div className="form-field">
-                    <label>Instructions</label>
-                    <textarea
-                      className="textarea"
-                      value={newExercise.instructions}
-                      onChange={(e) =>
-                        setNewExercise({ ...newExercise, instructions: e.target.value })
-                      }
-                    />
-                  </div>
-                  <div className="row">
-                    <Button variant="secondary" onClick={() => setCustom(false)}>
-                      Back to library
-                    </Button>
-                    <Button variant="primary" onClick={addCustom}>
-                      Save exercise
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="exercise-results">
-                    {allExercises(data)
-                      .filter(
-                        (e) =>
-                          !exerciseSearch ||
-                          e.name.toLowerCase().includes(exerciseSearch.toLowerCase()) ||
-                          e.muscles.some((m) =>
-                            m.toLowerCase().includes(exerciseSearch.toLowerCase()),
-                          ),
-                      )
-                      .slice(0, 45)
-                      .map((e) => (
-                        <button
-                          className="exercise-result"
-                          key={e.id}
-                          onClick={() => addExerciseToRoutine(e)}
-                        >
-                          <div className="nav-mini">
-                            <Plus size={16} />
-                          </div>
-                          <span className="grow">
-                            <b>{e.name}</b>
-                            <span
-                              className="muted small"
-                              style={{ display: 'block', marginTop: 3 }}
-                            >
-                              {e.muscles.slice(0, 2).join(', ')} · {e.equipment}
-                            </span>
-                          </span>
-                        </button>
-                      ))}
-                  </div>
-                  <Button variant="secondary" onClick={() => setCustom(true)}>
-                    <Plus size={16} />
-                    Create a custom exercise
-                  </Button>
-                </>
-              )}
-            </>
-          )}
-          <div className="dialog-footer">
-            <Button variant="secondary" onClick={() => setModal('')}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={saveRoutine}>
-              {draftProposalId
-                ? 'Approve and save draft'
-                : selectedRoutine
-                  ? 'Save changes'
-                  : 'Create routine'}
-            </Button>
-          </div>
+        <div className="sheet-actions">
+          <Button onClick={() => setDiscardRequested(false)}>Keep editing</Button>
+          <Button
+            variant="danger"
+            onClick={() => {
+              const resumeWorkout = leaveEditorToWorkout && active;
+              closeEditor();
+              if (resumeWorkout) {
+                setWorkoutId(resumeWorkout.id);
+                setTab('train');
+              }
+              setLeaveEditorToWorkout(false);
+            }}
+          >
+            Discard changes
+          </Button>
         </div>
-      </Dialog>
+      </Sheet>
       <Dialog
         open={modal === 'settings'}
         onOpenChange={(o) => !o && setModal('')}
@@ -1330,111 +962,161 @@ function App() {
       >
         {profileDraft && (
           <div className="stack">
-            <div className="row space-between">
-              <div>
-                <b>Weight units</b>
-                <div className="muted small">
-                  Saved weights stay consistent as you switch units.
-                </div>
-              </div>
-              <div className="toggle-row">
-                {['lb', 'kg'].map((u) => (
-                  <button
-                    key={u}
-                    className={profileDraft.unit === u ? 'selected' : ''}
-                    onClick={() => setProfileDraft({ ...profileDraft, unit: u })}
-                  >
-                    {u}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="divider" />
-            <b>Training profile</b>
-            <div className="profile-grid">
-              {(
-                ['goals', 'equipment', 'schedule', 'constraints', 'preferences', 'notes'] as const
-              ).map((k) => (
-                <div className="form-field" key={k}>
-                  <label>
-                    {
-                      (
-                        {
-                          goals: 'Goals',
-                          equipment: 'Available equipment',
-                          schedule: 'Schedule',
-                          constraints: 'Constraints',
-                          preferences: 'Preferences',
-                          notes: 'Notes',
-                        } as any
-                      )[k]
-                    }
-                  </label>
-                  <textarea
-                    className="textarea"
-                    aria-label={k}
-                    style={{ minHeight: 72 }}
-                    value={profileDraft.profile[k]}
-                    onChange={(e) =>
-                      setProfileDraft({
-                        ...profileDraft,
-                        profile: { ...profileDraft.profile, [k]: e.target.value },
-                      })
-                    }
-                    placeholder="Optional"
-                  />
-                </div>
+            <div className="settings-tabs" role="tablist" aria-label="Settings sections">
+              {(['general', 'profile', 'coach'] as const).map((key) => (
+                <button
+                  key={key}
+                  role="tab"
+                  aria-selected={settingsTab === key}
+                  className={`settings-tab${settingsTab === key ? ' active' : ''}`}
+                  onClick={() => setSettingsTab(key)}
+                >
+                  {key === 'general' ? 'General' : key === 'profile' ? 'Profile' : 'Coach'}
+                </button>
               ))}
             </div>
-            <div className="divider" />
-            <b>Coach provider</b>
-            <div className="notice">
-              API keys are provisioned on the server. Settings only selects a configured
-              provider/model.
-            </div>
-            {availableProviders.length ? (
-              <div className="profile-grid">
-                <div className="form-field">
-                  <label>Provider</label>
-                  <select
-                    className="select"
-                    value={profileDraft.provider}
-                    onChange={(e) => {
-                      const models =
-                        availableProviders.find((p) => p.id === e.target.value)?.models || [];
-                      setProfileDraft({
-                        ...profileDraft,
-                        provider: e.target.value,
-                        model: models[0] || '',
-                      });
+            {settingsTab === 'general' && (
+              <section className="settings-tab-panel" role="tabpanel">
+                <div className="row space-between">
+                  <div>
+                    <b>Weight units</b>
+                    <div className="muted small">
+                      Saved weights stay consistent as you switch units.
+                    </div>
+                  </div>
+                  <div className="toggle-row">
+                    {['lb', 'kg'].map((u) => (
+                      <button
+                        key={u}
+                        className={profileDraft.unit === u ? 'selected' : ''}
+                        onClick={() => setProfileDraft({ ...profileDraft, unit: u })}
+                      >
+                        {u}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="divider" />
+                <div className="row space-between">
+                  <div>
+                    <b>Data &amp; sync</b>
+                    <div className="muted small">Backup, restore, and resolve sync status.</div>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setSettingsReturnTab(tab);
+                      setModal('');
+                      setTab('settings');
                     }}
                   >
-                    {availableProviders.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.id === 'openai' ? 'OpenAI' : p.id === 'anthropic' ? 'Anthropic' : p.id}
-                      </option>
-                    ))}
-                  </select>
+                    Open
+                  </Button>
                 </div>
-                <div className="form-field">
-                  <label>Model</label>
-                  <select
-                    className="select"
-                    value={profileDraft.model}
-                    onChange={(e) => setProfileDraft({ ...profileDraft, model: e.target.value })}
-                  >
-                    {(
-                      availableProviders.find((p) => p.id === profileDraft.provider)?.models || []
-                    ).map((model) => (
-                      <option key={model} value={model}>
-                        {model}
-                      </option>
-                    ))}
-                  </select>
+              </section>
+            )}
+            {settingsTab === 'profile' && (
+              <section className="settings-tab-panel" role="tabpanel">
+                <b>Training profile</b>
+                <div className="profile-grid">
+                  {(
+                    [
+                      'goals',
+                      'equipment',
+                      'schedule',
+                      'constraints',
+                      'preferences',
+                      'notes',
+                    ] as const
+                  ).map((k) => (
+                    <div className="form-field" key={k}>
+                      <label>
+                        {
+                          (
+                            {
+                              goals: 'Goals',
+                              equipment: 'Available equipment',
+                              schedule: 'Schedule',
+                              constraints: 'Constraints',
+                              preferences: 'Preferences',
+                              notes: 'Notes',
+                            } as any
+                          )[k]
+                        }
+                      </label>
+                      <textarea
+                        className="textarea"
+                        aria-label={k}
+                        style={{ minHeight: 72 }}
+                        value={profileDraft.profile[k]}
+                        onChange={(e) =>
+                          setProfileDraft({
+                            ...profileDraft,
+                            profile: { ...profileDraft.profile, [k]: e.target.value },
+                          })
+                        }
+                        placeholder="Optional"
+                      />
+                    </div>
+                  ))}
                 </div>
-              </div>
-            ) : (
-              <p className="muted small">No AI provider is configured on the server yet.</p>
+              </section>
+            )}
+            {settingsTab === 'coach' && (
+              <section className="settings-tab-panel" role="tabpanel">
+                <b>Coach provider</b>
+                {availableProviders.length ? (
+                  <div className="profile-grid">
+                    <div className="form-field">
+                      <label>Provider</label>
+                      <select
+                        className="select"
+                        value={profileDraft.provider}
+                        onChange={(e) => {
+                          const models =
+                            availableProviders.find((p) => p.id === e.target.value)?.models || [];
+                          setProfileDraft({
+                            ...profileDraft,
+                            provider: e.target.value,
+                            model: models[0] || '',
+                          });
+                        }}
+                      >
+                        {availableProviders.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.id === 'openai'
+                              ? 'OpenAI'
+                              : p.id === 'anthropic'
+                                ? 'Anthropic'
+                                : p.id}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="form-field">
+                      <label>Model</label>
+                      <select
+                        className="select"
+                        value={profileDraft.model}
+                        onChange={(e) =>
+                          setProfileDraft({ ...profileDraft, model: e.target.value })
+                        }
+                      >
+                        {(
+                          availableProviders.find((p) => p.id === profileDraft.provider)?.models ||
+                          []
+                        ).map((model) => (
+                          <option key={model} value={model}>
+                            {model}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="muted small">No AI provider is configured on the server yet.</p>
+                )}
+              </section>
             )}
             <div className="dialog-footer">
               <Button onClick={() => setModal('')}>Cancel</Button>
@@ -1562,7 +1244,8 @@ function App() {
             <div className="muted small">
               {dateLabel(correction.workout.startedAt)} · {correction.workout.name}
             </div>
-            <div style={{ overflowX: 'auto' }}>
+            <p className="table-pan-hint">Swipe sideways to view all columns.</p>
+            <div className="set-table-scroll">
               <table className="set-table">
                 <thead>
                   <tr>
@@ -1671,7 +1354,7 @@ function App() {
         open={modal === 'coach-sheet'}
         onOpenChange={(o) => !o && setModal('')}
         title="Coach"
-        description="Workout context included"
+        description={editorVisible ? 'Routine draft context included' : 'Workout context included'}
       >
         <CoachScreen
           data={data}
@@ -2020,12 +1703,12 @@ function WorkoutScreen({
           )}
           {showTable && (
             <div className="card card-pad" style={{ marginTop: 14 }}>
-              <div className="row space-between">
+              <div className="row space-between set-table-header">
                 <div>
                   <h3>Set table</h3>
                   <div className="muted small">Edit any set, including completed sets.</div>
                 </div>
-                <div className="row">
+                <div className="set-table-actions">
                   <Button
                     size="sm"
                     onClick={() =>
@@ -2109,7 +1792,8 @@ function WorkoutScreen({
                   </Button>
                 </div>
               </div>
-              <div style={{ overflowX: 'auto' }}>
+              <p className="table-pan-hint">Swipe sideways to view all columns.</p>
+              <div className="set-table-scroll">
                 <table className="set-table">
                   <thead>
                     <tr>
@@ -2402,7 +2086,11 @@ function ProgressScreen({
           )}
           {selected && selected.points.length > 1 ? (
             <>
-              <div className="chart" role="img" aria-label={`Progress trend for ${selected.name}`}>
+              <div
+                className="chart strength-chart"
+                role="img"
+                aria-label={`Progress trend for ${selected.name}`}
+              >
                 {selected.points.slice(-8).map((p, i, arr) => {
                   const value = repsOnly ? p.reps : toDisplayWeight(p.weight, data.settings.unit);
                   const maxValue = Math.max(
@@ -2413,7 +2101,7 @@ function ProgressScreen({
                   );
                   return (
                     <div className="chart-col" key={p.date}>
-                      <span className="small tabular">
+                      <span className="small tabular chart-value">
                         {value}
                         {repsOnly ? ' reps' : ''}
                       </span>
@@ -2543,7 +2231,7 @@ function CoachScreen({
   const evidence = evidenceRecords;
   return (
     <div
-      className="page"
+      className="page coach-page"
       style={{
         display: 'flex',
         flexDirection: 'column',
@@ -2563,10 +2251,6 @@ function CoachScreen({
           <Plus size={16} />
           Build a routine
         </Button>
-      </div>
-      <div className="coach-context-note muted small">
-        Coach considers your routines and training profile. Program edits always wait for your
-        review.
       </div>
       {syncStatus !== 'synced' && (
         <div className="notice" role="status" style={{ marginBottom: 14 }}>
@@ -2593,16 +2277,15 @@ function CoachScreen({
       >
         {data.messages.length === 0 && (
           <div className="coach-empty">
-            <h2>What would you like to work on?</h2>
-            <p className="muted small">Ask about a lift, a plateau, or adapting your plan.</p>
+            <h2>What would you like help with?</h2>
             <div className="coach-prompts">
               {[
-                'Help me build a simple routine',
-                'How should I progress my squat?',
-                'Make today’s workout shorter',
-              ].map((q) => (
-                <button className="coach-prompt" key={q} onClick={() => setChatText(q)}>
-                  {q}
+                ['Build routine', 'Help me build a simple routine'],
+                ['Progress a lift', 'How should I progress my squat?'],
+                ['Shorten today', 'Make today’s workout shorter'],
+              ].map(([label, prompt]) => (
+                <button className="coach-prompt" key={label} onClick={() => setChatText(prompt)}>
+                  {label}
                 </button>
               ))}
             </div>
@@ -2663,29 +2346,29 @@ function CoachScreen({
             Coach is thinking…
           </div>
         )}
+        {proposals.length > 0 && (
+          <div className="stack" style={{ marginBottom: 14 }}>
+            {proposals.map((p: Proposal) => (
+              <ProposalCard
+                key={p.id}
+                proposal={p}
+                data={data}
+                selected={selection[p.id] ?? (p.edits.length ? p.edits.map((_, i) => i) : [0])}
+                setSelected={(v: number[]) => setSelection((s: any) => ({ ...s, [p.id]: v }))}
+                apply={() => apply(p)}
+                reject={() => reject(p)}
+              />
+            ))}
+          </div>
+        )}
       </div>
-      {proposals.length > 0 && (
-        <div className="stack" style={{ marginBottom: 14 }}>
-          {proposals.map((p: Proposal) => (
-            <ProposalCard
-              key={p.id}
-              proposal={p}
-              data={data}
-              selected={selection[p.id] ?? (p.edits.length ? p.edits.map((_, i) => i) : [0])}
-              setSelected={(v: number[]) => setSelection((s: any) => ({ ...s, [p.id]: v }))}
-              apply={() => apply(p)}
-              reject={() => reject(p)}
-            />
-          ))}
-        </div>
-      )}
       {error && (
         <div className="notice" style={{ marginBottom: 10 }} role="alert">
           {error}
         </div>
       )}
       <div
-        className="card card-pad"
+        className="card card-pad coach-composer"
         style={{ padding: 10, display: 'flex', gap: 8, alignItems: 'end' }}
       >
         <textarea
@@ -2717,9 +2400,6 @@ function CoachScreen({
           <ArrowRight size={18} />
         </Button>
       </div>
-      <p className="muted small" style={{ textAlign: 'center', margin: '8px 0 0' }}>
-        AI advice can be uncertain. You decide what changes.
-      </p>
     </div>
   );
 }
@@ -2728,14 +2408,19 @@ function SettingsScreen({
   data,
   status,
   openSettings,
+  onBack,
   exportBackup,
   importBackup,
   conflict,
   resolveConflict,
+  retrySync,
 }: any) {
   return (
-    <main className="page">
+    <main className="page data-settings-page">
       <div className="page-heading">
+        <Button variant="ghost" onClick={onBack} aria-label="Back to previous screen">
+          <ArrowLeft size={17} /> Back
+        </Button>
         <div>
           <div className="eyebrow">Your data and preferences</div>
           <h1>Settings</h1>
@@ -2840,6 +2525,11 @@ function SettingsScreen({
                 Use other copy
               </Button>
             </div>
+          )}
+          {status !== 'conflict' && status !== 'synced' && (
+            <Button onClick={() => void retrySync()} disabled={status === 'syncing'}>
+              Retry sync
+            </Button>
           )}
         </div>
       </section>

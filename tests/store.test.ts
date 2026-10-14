@@ -191,7 +191,7 @@ describe('durable local store synchronization', () => {
     reconnect();
     await vi.waitFor(() => expect(useStore().syncStatus).toBe('error'));
     expect(remote.revision).toBe(1);
-    events.dispatchEvent(new Event('online'));
+    await useStore().retrySync();
     await waitForSync();
     expect(requests).toHaveLength(2);
     expect(requests[0].operationId).toBe(requests[1].operationId);
