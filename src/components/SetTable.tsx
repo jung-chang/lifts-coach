@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fromDisplayWeight, toDisplayWeight } from '../../shared/domain';
 import type { WorkoutExercise, WorkoutSet } from '../../shared/types';
+import { loadModeLabel } from './LoadSemantics';
 
 type Unit = 'lb' | 'kg';
 type Field = 'weight' | 'reps';
@@ -118,7 +119,9 @@ export function SetTable({ exercise, unit, onEdit, onDone }: Props) {
         <thead>
           <tr>
             <th className="tablecolset">Set</th>
-            <th className="tablecolload">Load ({unit})</th>
+            <th className="tablecolload">
+              {loadModeLabel(exercise.loadMode)} ({unit})
+            </th>
             <th className="tablecolreps">Reps</th>
             <th className="tablecoldone">Done</th>
           </tr>
@@ -136,7 +139,8 @@ export function SetTable({ exercise, unit, onEdit, onDone }: Props) {
               if (checked) {
                 for (const field of ['weight', 'reps'] as const) {
                   const parsed = parsedFor(set, field);
-                  if (inputFor(set, field) && parsed !== null && parsed !== set[field]) patch[field] = parsed;
+                  if (inputFor(set, field) && parsed !== null && parsed !== set[field])
+                    patch[field] = parsed;
                 }
               }
               if (Object.keys(patch).length) onDone(set.id, checked, patch);
@@ -158,15 +162,7 @@ export function SetTable({ exercise, unit, onEdit, onDone }: Props) {
                 </th>
                 <td className="tablecolload">
                   {mode !== exercise.loadMode && (
-                    <span className="set-table-mode-hint">
-                      {mode === 'assistance'
-                        ? 'Assist'
-                        : mode === 'bodyweight'
-                          ? 'Added'
-                          : mode === 'per-dumbbell'
-                            ? 'Per dumbbell'
-                            : 'Load'}
-                    </span>
+                    <span className="set-table-mode-hint">{loadModeLabel(mode)}</span>
                   )}
                   <input
                     data-set-input={`${set.id}-weight`}

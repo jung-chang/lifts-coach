@@ -42,7 +42,7 @@ describe('RoutineEditor removal review', () => {
 
   it('blocks a displayed kg value that exceeds the stored load limit until corrected', () => {
     const { onSave } = setup('kg');
-    const target = screen.getByLabelText('Target (kg)');
+    const target = screen.getByLabelText('Total load (kg)');
     fireEvent.change(target, { target: { value: '1000' } });
     expect(target).toHaveProperty('value', '1000');
     fireEvent.click(screen.getByRole('button', { name: 'Save routine' }));
@@ -103,7 +103,7 @@ describe('RoutineEditor removal review', () => {
 
   it('keeps a negative target weight local, blocks save, and accepts zero', () => {
     const { onSave } = setup();
-    const target = screen.getByLabelText('Target (lb)');
+    const target = screen.getByLabelText('Total load (lb)');
     fireEvent.change(target, { target: { value: '-1' } });
     expect(target).toHaveProperty('value', '-1');
     expect(target.getAttribute('aria-invalid')).toBe('true');

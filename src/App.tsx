@@ -57,6 +57,10 @@ import { ProposalCard } from './components/ProposalCard';
 import { Sheet } from './components/ui/Sheet';
 import { RoutineEditor } from './components/RoutineEditor';
 import { SetTable } from './components/SetTable';
+import { FirstRunOnboarding } from './components/FirstRunOnboarding';
+import { formatLoadValue } from './components/LoadSemantics';
+import { SyncDetails } from './components/SyncDetails';
+import { addSampleRoutine } from './lib/sampleRoutine';
 import {
   applyInspectedRoutineProposal,
   commitRoutineDraft,
@@ -83,24 +87,32 @@ const completedSets = (w: Workout) =>
       n + e.actualSets.filter((s) => s.kind === 'working' && s.status === 'completed').length,
     0,
   );
-const weightLabel = (e: { loadMode: string }, unit: string) =>
-  e.loadMode === 'per-dumbbell'
-    ? `per dumbbell · ${unit}`
-    : e.loadMode === 'bodyweight'
-      ? 'bodyweight + optional load'
-      : e.loadMode === 'assistance'
-        ? 'assistance load'
-        : unit;
 const scopeLabel = (s: string) =>
   s === 'current_workout'
     ? 'Today only'
     : s === 'next_workout'
       ? 'Next workout'
       : 'Routine going forward';
-const applyDoneValues = (data: AppData, workoutId: string, exerciseId: string, setId: string, patch?: Partial<WorkoutSet>) => {
-  const set = data.workouts.find((item) => item.id === workoutId)?.exercises.find((item) => item.id === exerciseId)?.actualSets.find((item) => item.id === setId);
-  const changed = set && patch && (['weight', 'reps'] as const).some((field) => patch[field] !== undefined && patch[field] !== set[field]);
-  return changed ? updateSet(data, workoutId, exerciseId, setId, (current) => ({ ...current, ...patch })) : data;
+const applyDoneValues = (
+  data: AppData,
+  workoutId: string,
+  exerciseId: string,
+  setId: string,
+  patch?: Partial<WorkoutSet>,
+) => {
+  const set = data.workouts
+    .find((item) => item.id === workoutId)
+    ?.exercises.find((item) => item.id === exerciseId)
+    ?.actualSets.find((item) => item.id === setId);
+  const changed =
+    set &&
+    patch &&
+    (['weight', 'reps'] as const).some(
+      (field) => patch[field] !== undefined && patch[field] !== set[field],
+    );
+  return changed
+    ? updateSet(data, workoutId, exerciseId, setId, (current) => ({ ...current, ...patch }))
+    : data;
 };
 
 function App() {
@@ -114,6 +126,7 @@ function App() {
   const [editorReturnTab, setEditorReturnTab] = useState<Tab>('train');
   const [discardRequested, setDiscardRequested] = useState(false);
   const [routineDeleteId, setRoutineDeleteId] = useState<string | null>(null);
+  const [deleteDataRequested, setDeleteDataRequested] = useState(false);
   const [leaveEditorToWorkout, setLeaveEditorToWorkout] = useState(false);
   const editorBackCleanup = useRef<(() => void) | null>(null);
   const [notice, setNotice] = useState('');
@@ -710,21 +723,15 @@ function App() {
             <main className="page">
               {!viewedWorkout ? (
                 data.routines.length === 0 ? (
-                  <div className="card card-pad first-run-card">
-                    <div className="eyebrow">Train</div>
-                    <h1>Start with a routine</h1>
-                    <p className="muted">
-                      Create a plan that fits your training, or ask Coach to help shape one.
-                    </p>
-                    <div className="row first-run-actions">
-                      <Button variant="primary" size="lg" onClick={() => openRoutine()}>
-                        <Plus size={19} /> Create routine
-                      </Button>
-                      <Button variant="ai" onClick={() => openCoach({}, false)}>
-                        <Sparkles size={17} /> Ask Coach
-                      </Button>
-                    </div>
-                  </div>
+                  <FirstRunOnboarding
+                    onCreateRoutine={() => openRoutine()}
+                    onImportBackup={() => fileRef.current?.click()}
+                    onTrySampleRoutine={() => {
+                      void safeUpdate(addSampleRoutine).then((ok) => {
+                        if (ok) say('Sample routine added');
+                      });
+                    }}
+                  />
                 ) : (
                   <>
                     {(() => {
@@ -876,9 +883,12 @@ function App() {
                   activeExercise={activeExercise}
                   editSet={editSet}
                   setState={setState}
-                  toggleDone={(exerciseId: string, setId: string, done: boolean, patch?: Partial<WorkoutSet>) =>
-                    toggleSetDone(workout!, exerciseId, setId, done, patch)
-                  }
+                  toggleDone={(
+                    exerciseId: string,
+                    setId: string,
+                    done: boolean,
+                    patch?: Partial<WorkoutSet>,
+                  ) => toggleSetDone(workout!, exerciseId, setId, done, patch)}
                   timerNow={timerNow}
                   skipRest={skipRest}
                   finish={finish}
@@ -943,8 +953,11 @@ function App() {
               exportBackup={exportBackup}
               importBackup={() => fileRef.current?.click()}
               conflict={store.conflict}
+              pendingCount={store.pendingCount}
+              lastSyncedAt={store.lastSyncedAt}
               retrySync={store.retrySync}
               resolveConflict={store.resolveConflict}
+              onDeleteData={() => setDeleteDataRequested(true)}
             />
           )}
         </>
@@ -1024,6 +1037,32 @@ function App() {
           e.currentTarget.value = '';
         }}
       />
+      <Sheet
+        open={deleteDataRequested}
+        onOpenChange={(open) => !open && setDeleteDataRequested(false)}
+        title="Delete all data?"
+        description="This permanently removes your routines, workout history, profile, Coach conversation, and settings from this device and Cloudflare. This cannot be undone."
+      >
+        <div className="sheet-actions">
+          <Button onClick={() => setDeleteDataRequested(false)}>Cancel</Button>
+          <Button
+            variant="danger"
+            onClick={() => {
+              void store
+                .deleteAllData()
+                .then(() => {
+                  setDeleteDataRequested(false);
+                  setWorkoutId(null);
+                  setTab('train');
+                  say('Local and cloud data deleted');
+                })
+                .catch((error: Error) => say(error.message));
+            }}
+          >
+            Delete all data
+          </Button>
+        </div>
+      </Sheet>
       <Sheet
         open={routineDeleteId !== null}
         onOpenChange={(open) => !open && setRoutineDeleteId(null)}
@@ -1534,7 +1573,8 @@ function WorkoutScreen({
                 </div>
                 <h2 style={{ marginTop: 5 }}>{ex.name}</h2>
                 <span className="muted small">
-                  {weightLabel(ex, unit)} · target {ex.sets} × {ex.repRange[0]}–{ex.repRange[1]}
+                  {formatLoadValue(ex.loadMode, toDisplayWeight(ex.targetWeight, unit), unit)} ·{' '}
+                  target {ex.sets} × {ex.repRange[0]}–{ex.repRange[1]}
                 </span>
               </div>
             </div>
@@ -1633,7 +1673,17 @@ function WorkoutScreen({
                 {ex.actualSets.map((set, index) => (
                   <label key={set.id} className="row space-between small">
                     {set.kind === 'warmup' ? 'Warm-up' : 'Set'} {index + 1}
-                    <select className="select" style={{ width: 'auto', maxWidth: '70%' }} aria-label={`Set ${index + 1} load mode`} value={set.loadMode || ex.loadMode} onChange={(event) => editSet(ex.id, set, { loadMode: event.target.value as WorkoutSet['loadMode'] })}>
+                    <select
+                      className="select"
+                      style={{ width: 'auto', maxWidth: '70%' }}
+                      aria-label={`Set ${index + 1} load mode`}
+                      value={set.loadMode || ex.loadMode}
+                      onChange={(event) =>
+                        editSet(ex.id, set, {
+                          loadMode: event.target.value as WorkoutSet['loadMode'],
+                        })
+                      }
+                    >
                       <option value="bodyweight">Added weight</option>
                       <option value="assistance">Assistance</option>
                     </select>
@@ -1865,7 +1915,7 @@ function ProgressScreen({
               <p className="muted small" style={{ margin: '12px 0 0' }}>
                 {repsOnly
                   ? 'Best completed working-set reps · assistance is excluded'
-                  : `Best working-set load · values shown in ${data.settings.unit}`}
+                  : `Best working-set load · ${loadMode === 'per-dumbbell' ? 'per dumbbell' : 'total load'} in ${data.settings.unit}`}
               </p>
             </>
           ) : (
@@ -2160,8 +2210,11 @@ function SettingsScreen({
   exportBackup,
   importBackup,
   conflict,
+  pendingCount,
+  lastSyncedAt,
   resolveConflict,
   retrySync,
+  onDeleteData,
 }: any) {
   return (
     <main className="page data-settings-page">
@@ -2171,7 +2224,7 @@ function SettingsScreen({
         </Button>
         <div>
           <div className="eyebrow">Your data and preferences</div>
-          <h1>Settings</h1>
+          <h1>Data &amp; privacy</h1>
         </div>
         <Button variant="secondary" onClick={openSettings}>
           <SettingsIcon size={17} />
@@ -2234,6 +2287,34 @@ function SettingsScreen({
         </section>
       </div>
       <section className="card card-pad" style={{ marginTop: 16 }}>
+        <div>
+          <h2 style={{ marginBottom: 2 }}>Privacy</h2>
+          <div className="muted small">A plain summary of where your information goes.</div>
+        </div>
+        <div className="stack privacy-summary" style={{ marginTop: 16 }}>
+          <p>
+            Workout data is stored on this device and in your authenticated Cloudflare database so
+            it can sync between your devices.
+          </p>
+          <p>
+            When you send a Coach message, relevant routines, recent workout history, profile, and
+            conversation context are sent to the AI provider selected in Settings. Provider keys
+            stay on the server.
+          </p>
+          <p>No advertising pixels or third-party product analytics are included.</p>
+        </div>
+        <div className="divider" />
+        <div className="row space-between data-delete-row">
+          <div>
+            <b>Delete your data</b>
+            <div className="muted small">Removes both the local copy and cloud copy.</div>
+          </div>
+          <Button variant="danger" onClick={onDeleteData}>
+            <Trash2 size={17} /> Delete all data
+          </Button>
+        </div>
+      </section>
+      <section className="card card-pad" style={{ marginTop: 16 }}>
         <div className="row space-between">
           <div>
             <div className="row">
@@ -2264,22 +2345,17 @@ function SettingsScreen({
                         : 'Could not sync right now.'}
             </div>
           </div>
-          {status === 'conflict' && (
-            <div className="row">
-              <Button size="sm" onClick={() => resolveConflict('local')}>
-                Keep this device
-              </Button>
-              <Button size="sm" variant="primary" onClick={() => resolveConflict('remote')}>
-                Use other copy
-              </Button>
-            </div>
-          )}
-          {status !== 'conflict' && status !== 'synced' && (
-            <Button onClick={() => void retrySync()} disabled={status === 'syncing'}>
-              Retry sync
-            </Button>
-          )}
         </div>
+        <div className="divider" />
+        <SyncDetails
+          syncStatus={status}
+          pendingCount={pendingCount}
+          lastSyncedAt={lastSyncedAt}
+          localData={data}
+          conflict={conflict}
+          onRetry={() => void retrySync()}
+          onResolveConflict={resolveConflict}
+        />
       </section>
     </main>
   );

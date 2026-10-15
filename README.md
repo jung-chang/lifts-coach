@@ -2,7 +2,7 @@
 
 A personal, mobile-first workout tracker with a context-aware Coach. The user approved **Lifts Coach**, with `lifts.coach` as the planned domain, after the original specification was written. The original [fitness_app_product_spec.md](fitness_app_product_spec.md) stays unchanged; this subsequent branding decision overrides its temporary-name guidance for implementation. Domain registration and DNS configuration remain deployment steps.
 
-The client uses React, TypeScript, Vite, Tailwind and local shadcn-style Radix components. Active workouts and the durable synchronization queue live in IndexedDB through Dexie. The Hono Worker stores a revisioned personal document in D1 using Drizzle; Vercel AI SDK connects only to provisioned server-side providers. This is a single-user, single-active-device application.
+The client uses React, TypeScript, Vite, Tailwind and local shadcn-style Radix components. Active workouts and the durable synchronization queue live in IndexedDB through Dexie. The Hono Worker stores a revisioned document per verified Cloudflare Access identity in D1 using Drizzle; Vercel AI SDK connects only to provisioned server-side providers. This is a personal-first application with explicit conflict handling when the same account changes data on multiple devices.
 
 The current interface follows the owner's Maia/Olive/Yellow redesign request, with self-hosted Geist typography. This visual override is recorded in [the design system](docs/design-system.md); the protected original specification remains unchanged.
 
@@ -97,7 +97,7 @@ Settings exports a complete schema-versioned JSON backup of routines, custom exe
 
 The manifest includes standalone display and raster install icons. Static assets are cached by the service worker; API responses are excluded. On iPhone, use Safari **Share → Add to Home Screen**. On Android, use the browser's install action. Logging can recover after reload and works without a model or network connection. Rest timers use expiry timestamps and recover after suspension; they are in-app timers, not native background notifications.
 
-Personal data is stored locally and in your Cloudflare account. Coach requests send relevant routines, a bounded recent history, profile and conversation to the chosen model provider. The research corpus consists of manually curated, cited Markdown summaries bundled with the Worker. No live literature search or automatic ingestion runs. Review the corpus's [maintenance notes](evidence/README.md) before extending it.
+Personal data is stored locally and in your Cloudflare account, partitioned by the verified Access identity. The Data & privacy screen exports a backup and can permanently delete that identity's local and cloud copies after confirmation. Coach requests send relevant routines, a bounded recent history, profile and conversation to the chosen model provider. The research corpus consists of manually curated, cited Markdown summaries bundled with the Worker. No live literature search or automatic ingestion runs. Review the corpus's [maintenance notes](evidence/README.md) before extending it.
 
 See [acceptance checklist](docs/acceptance-checklist.md) for scope and verification. This prototype should be verified on real iOS/Android devices and with an actual Access/D1 deployment before relying on it as your sole training record.
 

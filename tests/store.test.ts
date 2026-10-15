@@ -146,6 +146,63 @@ describe('durable local store synchronization', () => {
     expect(remote.data.settings.profile.goals).toBe('Get stronger');
   });
 
+  it('publishes a durable pending count and last successful sync time', async () => {
+    await useStore().update((data) => ({ ...data, routines: [createRoutine('Pending locally')] }));
+    expect(useStore().pendingCount).toBe(1);
+    expect(useStore().lastSyncedAt).toBeNull();
+    reconnect();
+    await waitForSync();
+    expect(useStore().pendingCount).toBe(0);
+    expect(useStore().lastSyncedAt).toEqual(expect.any(String));
+
+    vi.resetModules();
+    events = new EventTarget();
+    vi.stubGlobal('window', events);
+    useStore = (await import('../src/lib/store')).useAppStore;
+    await useStore().exportData();
+    expect(useStore().pendingCount).toBe(0);
+    expect(useStore().lastSyncedAt).toEqual(expect.any(String));
+  });
+
+  it('deletes cloud and local data only after the server confirms deletion', async () => {
+    await useStore().update((data) => ({
+      ...data,
+      routines: [createRoutine('Delete me')],
+    }));
+    reconnect();
+    await waitForSync();
+    const originalFetch = globalThis.fetch;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === 'DELETE') {
+          remote = { data: emptyData(), revision: 0 };
+          return new Response(null, { status: 204 });
+        }
+        return originalFetch(url, init);
+      }),
+    );
+    await useStore().deleteAllData();
+    expect(useStore().data).toEqual(emptyData());
+    expect(useStore().pendingCount).toBe(0);
+    expect(useStore().syncStatus).toBe('synced');
+    expect(JSON.parse(await useStore().exportData())).toEqual(emptyData());
+  });
+
+  it('keeps local data when cloud deletion fails', async () => {
+    connection.onLine = true;
+    await useStore().update((data) => ({
+      ...data,
+      routines: [createRoutine('Keep me')],
+    }));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({}, { status: 503 })),
+    );
+    await expect(useStore().deleteAllData()).rejects.toThrow('Data deletion failed');
+    expect(useStore().data?.routines[0].name).toBe('Keep me');
+  });
+
   it('serializes concurrent local mutations without losing either update', async () => {
     await Promise.all([
       useStore().update((data) => ({

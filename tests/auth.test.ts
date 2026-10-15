@@ -25,9 +25,15 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllGlobals());
 
-async function request(overrides: { issuer?: string; audience?: string; expiry?: string } = {}) {
-  const token = await new SignJWT({ email: 'owner@example.test' })
-    .setProtectedHeader({ alg: 'RS256', kid: 'test-key' })
+async function request(
+  overrides: { issuer?: string; audience?: string; expiry?: string; sub?: string | null } = {},
+) {
+  let jwt = new SignJWT({ email: 'owner@example.test' }).setProtectedHeader({
+    alg: 'RS256',
+    kid: 'test-key',
+  });
+  if (overrides.sub !== null) jwt = jwt.setSubject(overrides.sub ?? 'owner-sub');
+  const token = await jwt
     .setIssuer(overrides.issuer ?? issuer)
     .setAudience(overrides.audience ?? env.ACCESS_AUD)
     .setIssuedAt()
@@ -40,48 +46,56 @@ async function request(overrides: { issuer?: string; audience?: string; expiry?:
 
 describe('Cloudflare Access authorization', () => {
   it('accepts a signed token for the configured issuer and audience', async () => {
-    expect(await authorize(await request(), env)).toBe(true);
+    expect(await authorize(await request(), env)).toMatch(/^access:[a-f0-9]{64}$/);
+  });
+  it('derives stable, distinct account identities from verified subjects', async () => {
+    const first = await authorize(await request(), env);
+    expect(await authorize(await request(), env)).toBe(first);
+    expect(await authorize(await request({ sub: 'other-sub' }), env)).not.toBe(first);
   });
   it('rejects a valid signature with the wrong audience', async () => {
-    expect(await authorize(await request({ audience: 'different-app' }), env)).toBe(false);
+    expect(await authorize(await request({ audience: 'different-app' }), env)).toBeNull();
   });
   it('rejects a valid signature from the wrong issuer', async () => {
     expect(
       await authorize(await request({ issuer: 'https://another.cloudflareaccess.com' }), env),
-    ).toBe(false);
+    ).toBeNull();
   });
   it('rejects expired credentials', async () => {
-    expect(await authorize(await request({ expiry: '-1m' }), env)).toBe(false);
+    expect(await authorize(await request({ expiry: '-1m' }), env)).toBeNull();
+  });
+  it('rejects a verified token without a subject claim', async () => {
+    expect(await authorize(await request({ sub: null }), env)).toBeNull();
   });
   it('rejects missing configuration, missing token, and malformed tokens', async () => {
     const plain = new Request('https://training-lab.example.workers.dev/api/state');
-    expect(await authorize(plain, {})).toBe(false);
-    expect(await authorize(plain, env)).toBe(false);
+    expect(await authorize(plain, {})).toBeNull();
+    expect(await authorize(plain, env)).toBeNull();
     expect(
       await authorize(
         new Request(plain, { headers: { 'Cf-Access-Jwt-Assertion': 'not-a-jwt' } }),
         env,
       ),
-    ).toBe(false);
+    ).toBeNull();
   });
   it('does not fetch keys from an arbitrary configured hostname', async () => {
     expect(
       await authorize(await request(), { ...env, ACCESS_TEAM_DOMAIN: 'https://untrusted.example' }),
-    ).toBe(false);
+    ).toBeNull();
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });
   it('limits the explicit development bypass to loopback', async () => {
     expect(
       await authorize(new Request('http://localhost:8787/api/state'), { LOCAL_DEV: 'true' }),
-    ).toBe(true);
+    ).toBe('local-dev');
     expect(
       await authorize(new Request('http://127.0.0.1:8787/api/state'), { LOCAL_DEV: 'true' }),
-    ).toBe(true);
-    expect(await authorize(new Request('http://localhost:8787/api/state'), {})).toBe(false);
+    ).toBe('local-dev');
+    expect(await authorize(new Request('http://localhost:8787/api/state'), {})).toBeNull();
     expect(
       await authorize(new Request('https://training-lab.example.workers.dev/api/state'), {
         LOCAL_DEV: 'true',
       }),
-    ).toBe(false);
+    ).toBeNull();
   });
 });

@@ -17,7 +17,8 @@ interface Env extends ProviderEnv {
   ACCESS_AUD?: string;
   LOCAL_DEV?: string;
 }
-const app = new Hono<{ Bindings: Env }>();
+type Variables = { accountId: string };
+const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use(
   '/api/*',
   bodyLimit({
@@ -34,8 +35,9 @@ app.use(
 );
 app.use('/api/*', async (c, next) => {
   c.header('Cache-Control', 'no-store');
-  if (!(await authorize(c.req.raw, c.env)))
-    return c.json({ error: 'Cloudflare Access authentication is required.' }, 401);
+  const accountId = await authorize(c.req.raw, c.env);
+  if (!accountId) return c.json({ error: 'Cloudflare Access authentication is required.' }, 401);
+  c.set('accountId', accountId);
   if (!['GET', 'HEAD'].includes(c.req.method)) {
     const origin = c.req.header('origin');
     const url = new URL(c.req.url);
@@ -49,12 +51,12 @@ app.use('/api/*', async (c, next) => {
   }
   await next();
 });
-async function readState(env: Env) {
+async function readState(env: Env, accountId: string) {
   const db = drizzle(env.DB);
   await db
     .insert(accountState)
     .values({
-      id: 'personal',
+      id: accountId,
       payload: JSON.stringify(emptyData()),
       revision: 0,
       updatedAt: new Date().toISOString(),
@@ -64,8 +66,10 @@ async function readState(env: Env) {
   // D1 batches execute transactionally: metadata and chunks must describe the
   // same revision even when another device is writing concurrently.
   const [metadata, contents] = await env.DB.batch([
-    env.DB.prepare('SELECT payload, revision FROM account_state WHERE id = ?').bind('personal'),
-    env.DB.prepare('SELECT content FROM state_chunks ORDER BY chunk_index'),
+    env.DB.prepare('SELECT payload, revision FROM account_state WHERE id = ?').bind(accountId),
+    env.DB.prepare(
+      'SELECT content FROM state_chunks WHERE account_id = ? ORDER BY chunk_index',
+    ).bind(accountId),
   ]);
   const row = metadata.results[0] as { payload: string; revision: number };
   const chunks = contents.results as { content: string }[];
@@ -76,7 +80,7 @@ async function readState(env: Env) {
     revision: row.revision,
   };
 }
-app.get('/api/state', async (c) => c.json(await readState(c.env)));
+app.get('/api/state', async (c) => c.json(await readState(c.env, c.get('accountId'))));
 app.get('/api/providers', (c) => c.json(providers(c.env)));
 app.put('/api/state', async (c) => {
   const request = z
@@ -97,11 +101,12 @@ app.put('/api/state', async (c) => {
   const fingerprint = [...new Uint8Array(digest)]
     .map((byte) => byte.toString(16).padStart(2, '0'))
     .join('');
-  await readState(c.env);
+  const accountId = c.get('accountId');
+  await readState(c.env, accountId);
   const previous = await c.env.DB.prepare(
-    'SELECT revision, fingerprint FROM sync_receipts WHERE operation_id = ?',
+    'SELECT revision, fingerprint FROM sync_receipts WHERE account_id = ? AND operation_id = ?',
   )
-    .bind(request.operationId)
+    .bind(accountId, request.operationId)
     .first<{ revision: number; fingerprint: string }>();
   if (previous)
     return previous.fingerprint === fingerprint
@@ -112,30 +117,40 @@ app.put('/api/state', async (c) => {
   await c.env.DB.batch([
     c.env.DB.prepare(
       'UPDATE account_state SET payload = ?, revision = revision + 1, updated_at = ?, device_id = ?, last_operation_id = ? WHERE id = ? AND revision = ?',
-    ).bind('', now, request.deviceId, request.operationId, 'personal', request.baseRevision),
+    ).bind('', now, request.deviceId, request.operationId, accountId, request.baseRevision),
     c.env.DB.prepare(
-      'DELETE FROM state_chunks WHERE EXISTS (SELECT 1 FROM account_state WHERE id = ? AND last_operation_id = ?)',
-    ).bind('personal', request.operationId),
+      'DELETE FROM state_chunks WHERE account_id = ? AND EXISTS (SELECT 1 FROM account_state WHERE id = ? AND last_operation_id = ?)',
+    ).bind(accountId, accountId, request.operationId),
     ...chunks.map((content, index) =>
       c.env.DB.prepare(
-        'INSERT INTO state_chunks (chunk_index, content) SELECT ?, ? WHERE EXISTS (SELECT 1 FROM account_state WHERE id = ? AND last_operation_id = ?)',
-      ).bind(index, content, 'personal', request.operationId),
+        'INSERT INTO state_chunks (account_id, chunk_index, content) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM account_state WHERE id = ? AND last_operation_id = ?)',
+      ).bind(accountId, index, content, accountId, request.operationId),
     ),
     c.env.DB.prepare(
-      'INSERT OR IGNORE INTO sync_receipts (operation_id, revision, created_at, fingerprint) SELECT ?, revision, ?, ? FROM account_state WHERE id = ? AND last_operation_id = ?',
-    ).bind(request.operationId, now, fingerprint, 'personal', request.operationId),
+      'INSERT OR IGNORE INTO sync_receipts (account_id, operation_id, revision, created_at, fingerprint) SELECT ?, ?, revision, ?, ? FROM account_state WHERE id = ? AND last_operation_id = ?',
+    ).bind(accountId, request.operationId, now, fingerprint, accountId, request.operationId),
   ]);
   const receipt = await c.env.DB.prepare(
-    'SELECT revision, fingerprint FROM sync_receipts WHERE operation_id = ?',
+    'SELECT revision, fingerprint FROM sync_receipts WHERE account_id = ? AND operation_id = ?',
   )
-    .bind(request.operationId)
+    .bind(accountId, request.operationId)
     .first<{ revision: number; fingerprint: string }>();
-  if (!receipt) return c.json(await readState(c.env), 409);
+  if (!receipt) return c.json(await readState(c.env, accountId), 409);
   if (receipt.fingerprint !== fingerprint)
     return c.json({ error: 'An operation identifier was reused for different content.' }, 400);
   return c.json({ revision: receipt.revision });
 });
-app.get('/api/export', async (c) => c.json((await readState(c.env)).data));
+app.get('/api/export', async (c) => c.json((await readState(c.env, c.get('accountId'))).data));
+app.delete('/api/state', async (c) => {
+  const accountId = c.get('accountId');
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM state_chunks WHERE account_id = ?').bind(accountId),
+    c.env.DB.prepare('DELETE FROM sync_receipts WHERE account_id = ?').bind(accountId),
+    c.env.DB.prepare('DELETE FROM coach_requests WHERE account_id = ?').bind(accountId),
+    c.env.DB.prepare('DELETE FROM account_state WHERE id = ?').bind(accountId),
+  ]);
+  return c.body(null, 204);
+});
 app.post('/api/import', (c) =>
   c.json(
     { error: 'Import must use the confirmed, revision-checked local restore flow and /api/state.' },
@@ -143,6 +158,7 @@ app.post('/api/import', (c) =>
   ),
 );
 app.post('/api/coach/chat', async (c) => {
+  const accountId = c.get('accountId');
   const request = z
     .object({
       message: z.string().trim().min(1).max(4000),
@@ -160,19 +176,19 @@ app.post('/api/coach/chat', async (c) => {
   const now = new Date().toISOString(),
     cutoff = new Date(Date.now() - 60_000).toISOString();
   const count = await c.env.DB.prepare(
-    'SELECT COUNT(*) AS count FROM coach_requests WHERE created_at > ?',
+    'SELECT COUNT(*) AS count FROM coach_requests WHERE account_id = ? AND created_at > ?',
   )
-    .bind(cutoff)
+    .bind(accountId, cutoff)
     .first<{ count: number }>();
   if ((count?.count || 0) >= 8)
     return c.json({ error: 'Coach is receiving many requests. Try again in a minute.' }, 429);
-  await c.env.DB.prepare('INSERT INTO coach_requests (id, created_at) VALUES (?, ?)')
-    .bind(crypto.randomUUID(), now)
+  await c.env.DB.prepare('INSERT INTO coach_requests (account_id, id, created_at) VALUES (?, ?, ?)')
+    .bind(accountId, crypto.randomUUID(), now)
     .run();
-  await c.env.DB.prepare('DELETE FROM coach_requests WHERE created_at < ?')
-    .bind(new Date(Date.now() - 86_400_000).toISOString())
+  await c.env.DB.prepare('DELETE FROM coach_requests WHERE account_id = ? AND created_at < ?')
+    .bind(accountId, new Date(Date.now() - 86_400_000).toISOString())
     .run();
-  const { data } = await readState(c.env);
+  const { data } = await readState(c.env, accountId);
   return c.json(await coachReply(c.env, data, request));
 });
 app.notFound((c) => c.json({ error: 'Unknown API endpoint.' }, 404));

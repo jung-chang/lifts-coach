@@ -19,7 +19,11 @@ export function diagnoseDeployment(env) {
   for (const name of SECRET_FIELDS) {
     const value = env[name];
     if (!safeSingleLine(value)) {
-      issues.push({ name, kind: value == null || (typeof value === 'string' && !value.trim()) ? 'missing' : 'invalid', location: 'Secrets' });
+      issues.push({
+        name,
+        kind: value == null || (typeof value === 'string' && !value.trim()) ? 'missing' : 'invalid',
+        location: 'Secrets',
+      });
     }
   }
   const accountId = env.CLOUDFLARE_ACCOUNT_ID;
@@ -38,7 +42,12 @@ export function diagnoseDeployment(env) {
     } catch {
       // The validator's errors may include untrusted input; diagnostics use only fixed names.
     }
-    if (missing || !valid) issues.push({ name, kind: missing ? 'missing' : 'invalid', location: 'Secrets or Variables' });
+    if (missing || !valid)
+      issues.push({
+        name,
+        kind: missing ? 'missing' : 'invalid',
+        location: 'Secrets or Variables',
+      });
   }
 
   return { ready: issues.length === 0, issues };
@@ -50,7 +59,10 @@ export function formatDeploymentDiagnostics(report) {
     const placement = location === 'Secrets' ? 'Secrets' : 'Secrets (preferred) or Variables';
     return `::warning title=Deployment configuration::${name} is ${kind}. Add it under Settings > Secrets and variables > Actions > ${placement}, or the production environment.`;
   });
-  return [...warnings, '::notice::Deployment skipped. Correct the listed settings and rerun the workflow.'].join('\n');
+  return [
+    ...warnings,
+    '::notice::Deployment skipped. Correct the listed settings and rerun the workflow.',
+  ].join('\n');
 }
 
 function main() {

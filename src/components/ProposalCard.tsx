@@ -3,6 +3,7 @@ import type { AppData, Proposal, TrainingEdit, Prescription } from '../../shared
 import { catalog } from '../../shared/catalog';
 import { Button } from './ui/Button';
 import { toDisplayWeight } from '../../shared/domain';
+import { formatLoadValue } from './LoadSemantics';
 
 type Props = {
   proposal: Proposal;
@@ -29,9 +30,11 @@ export function ProposalCard({ proposal, data, selected, setSelected, apply, rej
     return [...catalog, ...data.exercises].find((e) => e.id === exerciseId)?.name || exerciseId;
   };
   const target = (id: string) => prescriptions.find((p) => p.id === id);
+  const loadMode = (id: string) =>
+    [...catalog, ...data.exercises].find((exercise) => exercise.id === id)?.loadMode || 'external';
   const value = (p: Prescription | undefined) =>
     p
-      ? `${p.sets} sets · ${p.repRange[0]}–${p.repRange[1]} reps · ${toDisplayWeight(p.targetWeight, data.settings.unit)} ${data.settings.unit} · ${p.restSeconds}s rest`
+      ? `${p.sets} sets · ${p.repRange[0]}–${p.repRange[1]} reps · ${formatLoadValue(p.loadMode, toDisplayWeight(p.targetWeight, data.settings.unit), data.settings.unit)} · ${p.restSeconds}s rest`
       : 'Not in the current plan';
   const describe = (edit: TrainingEdit) => {
     if (edit.op === 'update_exercise') {
@@ -84,7 +87,7 @@ export function ProposalCard({ proposal, data, selected, setSelected, apply, rej
           <div className="small muted">
             {edit.sets} × {edit.repRange[0]}–{edit.repRange[1]} reps
             {edit.targetWeight !== undefined
-              ? ` · ${toDisplayWeight(edit.targetWeight, data.settings.unit)} ${data.settings.unit}`
+              ? ` · ${formatLoadValue(loadMode(edit.exerciseId), toDisplayWeight(edit.targetWeight, data.settings.unit), data.settings.unit)}`
               : ''}
           </div>
         </>

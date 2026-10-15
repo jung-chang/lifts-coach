@@ -12,6 +12,7 @@ import {
 import { Button } from './ui/Button';
 import { Sheet } from './ui/Sheet';
 import { parseRepRange } from '../lib/repRange';
+import { loadModeLabel } from './LoadSemantics';
 
 export function RoutineEditor({
   data,
@@ -281,9 +282,7 @@ export function RoutineEditor({
                   <div className="routine-editor-item-head">
                     <div className="grow">
                       <b>{ex?.name || p.exerciseId}</b>
-                      {p.loadMode === 'per-dumbbell' && (
-                        <div className="muted small">Weight is per dumbbell</div>
-                      )}
+                      <div className="muted small">{loadModeLabel(p.loadMode)}</div>
                     </div>
                     <Button
                       variant="ghost"
@@ -341,7 +340,7 @@ export function RoutineEditor({
                       />
                     </div>
                     {field(
-                      `${p.loadMode === 'per-dumbbell' ? `Load (${data.settings.unit})` : p.loadMode === 'bodyweight' ? `Added (${data.settings.unit})` : p.loadMode === 'assistance' ? `Assist (${data.settings.unit})` : `Target (${data.settings.unit})`}`,
+                      `${loadModeLabel(p.loadMode)} (${data.settings.unit})`,
                       toDisplayWeight(p.targetWeight, data.settings.unit),
                       'weight',
                       0,

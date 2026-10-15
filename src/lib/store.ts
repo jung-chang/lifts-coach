@@ -25,8 +25,20 @@ class LocalDb extends Dexie {
 const db = new LocalDb();
 type SyncStatus = 'local' | 'syncing' | 'synced' | 'offline' | 'conflict' | 'error';
 type Conflict = { revision: number; data: AppData } | null;
-type Snapshot = { data: AppData | null; syncStatus: SyncStatus; conflict: Conflict };
-let snapshot: Snapshot = { data: null, syncStatus: 'local', conflict: null };
+type Snapshot = {
+  data: AppData | null;
+  syncStatus: SyncStatus;
+  conflict: Conflict;
+  pendingCount: number;
+  lastSyncedAt: string | null;
+};
+let snapshot: Snapshot = {
+  data: null,
+  syncStatus: 'local',
+  conflict: null,
+  pendingCount: 0,
+  lastSyncedAt: null,
+};
 const listeners = new Set<() => void>();
 const publish = (next: Partial<Snapshot>) => {
   snapshot = { ...snapshot, ...next };
@@ -111,14 +123,19 @@ async function sendOutbox(): Promise<void> {
         }
         if (!response.ok) throw new Error(`Sync failed (${response.status})`);
         const result = (await response.json()) as { revision: number };
+        const lastSyncedAt = new Date().toISOString();
         await db.transaction('rw', db.meta, db.outbox, async () => {
           await db.meta.put({ key: 'revision', value: result.revision });
           await db.outbox.delete(item.operationId);
-          if ((await db.outbox.count()) === 0)
+          const pendingCount = await db.outbox.count();
+          await db.meta.put({ key: 'pendingCount', value: pendingCount });
+          if (pendingCount === 0)
             await db.meta.put({ key: 'reservedNext', value: result.revision });
+          await db.meta.put({ key: 'lastSyncedAt', value: lastSyncedAt });
+          publish({ pendingCount, lastSyncedAt });
         });
       }
-      publish({ syncStatus: 'synced', conflict: null });
+      publish({ syncStatus: 'synced', conflict: null, pendingCount: await db.outbox.count() });
     } catch {
       publish({ syncStatus: navigator.onLine ? 'error' : 'offline' });
     }
@@ -146,18 +163,31 @@ async function connectRemote(): Promise<void> {
     await runMutation(async () => {
       const storedRev = await revision(),
         queued = await db.outbox.count();
+      publish({ pendingCount: queued });
       // A pull and a local edit share the same queue: a late response must not
       // replace a freshly logged set or reset its reserved outbox revision.
       if (queued || snapshot.conflict) return;
+      const lastSyncedAt = new Date().toISOString();
       if (remote.revision > storedRev || !snapshot.data) {
         await db.transaction('rw', db.records, db.meta, async () => {
           await db.records.put({ key: 'app-data', data: valid });
           await db.meta.put({ key: 'revision', value: remote.revision });
           await db.meta.put({ key: 'reservedNext', value: remote.revision });
+          await db.meta.put({ key: 'pendingCount', value: 0 });
+          await db.meta.put({ key: 'lastSyncedAt', value: lastSyncedAt });
         });
-        publish({ data: valid, syncStatus: 'synced', conflict: null });
+        publish({
+          data: valid,
+          syncStatus: 'synced',
+          conflict: null,
+          pendingCount: 0,
+          lastSyncedAt,
+        });
       } else if (remote.revision < storedRev) {
         publish({ syncStatus: 'conflict', conflict: { data: valid, revision: remote.revision } });
+      } else {
+        await db.meta.put({ key: 'lastSyncedAt', value: lastSyncedAt });
+        publish({ lastSyncedAt });
       }
     });
     if (!snapshot.conflict) await sendOutbox();
@@ -170,8 +200,19 @@ async function initialize(): Promise<void> {
   if (initPromise) return initPromise;
   initPromise = (async () => {
     const local = await db.records.get('app-data');
-    if (local) publish({ data: validateBackup(local.data), syncStatus: 'local' });
-    else publish({ data: emptyData(), syncStatus: 'local' });
+    const [pendingCount, lastSynced] = await Promise.all([
+      db.outbox.count(),
+      db.meta.get('lastSyncedAt'),
+    ]);
+    const lastSyncedAt = typeof lastSynced?.value === 'string' ? lastSynced.value : null;
+    if (local)
+      publish({
+        data: validateBackup(local.data),
+        syncStatus: 'local',
+        pendingCount,
+        lastSyncedAt,
+      });
+    else publish({ data: emptyData(), syncStatus: 'local', pendingCount, lastSyncedAt });
     // Network discovery never blocks the transaction that saves a local set.
     if (navigator.onLine) void connectRemote();
     else publish({ syncStatus: 'offline' });
@@ -213,8 +254,13 @@ export function useAppStore() {
         await db.meta.put({ key: 'reservedNext', value: baseRevision + 1 });
         await db.records.put({ key: 'app-data', data: next });
         await db.outbox.put(item);
+        await db.meta.put({ key: 'pendingCount', value: await db.outbox.count() });
       });
-      publish({ data: next, syncStatus: snapshot.conflict ? 'conflict' : 'local' });
+      publish({
+        data: next,
+        pendingCount: await db.outbox.count(),
+        syncStatus: snapshot.conflict ? 'conflict' : 'local',
+      });
       if (!snapshot.conflict) void sendOutbox();
     });
   return {
@@ -232,11 +278,14 @@ export function useAppStore() {
         if (!chosen) return;
         await syncPromise;
         let item: OutboxItem | undefined;
+        const resolvedAt = choice === 'remote' ? new Date().toISOString() : null;
         await db.transaction('rw', db.records, db.meta, db.outbox, async () => {
           await db.records.put({ key: 'app-data', data: chosen });
           await db.meta.put({ key: 'revision', value: conflict.revision });
           await db.meta.put({ key: 'reservedNext', value: conflict.revision });
           await db.outbox.clear();
+          await db.meta.put({ key: 'pendingCount', value: 0 });
+          if (resolvedAt) await db.meta.put({ key: 'lastSyncedAt', value: resolvedAt });
           if (choice === 'local') {
             item = {
               operationId: id('op'),
@@ -247,12 +296,15 @@ export function useAppStore() {
             };
             await db.meta.put({ key: 'reservedNext', value: conflict.revision + 1 });
             await db.outbox.put(item);
+            await db.meta.put({ key: 'pendingCount', value: 1 });
           }
         });
         publish({
           data: chosen,
           conflict: null,
           syncStatus: choice === 'remote' ? 'synced' : 'local',
+          pendingCount: item ? 1 : 0,
+          ...(resolvedAt ? { lastSyncedAt: resolvedAt } : {}),
         });
         if (item) void sendOutbox();
       }),
@@ -265,5 +317,36 @@ export function useAppStore() {
       const imported = validateBackup(typeof input === 'string' ? JSON.parse(input) : input);
       await update(() => imported);
     },
+    deleteAllData: async () =>
+      runMutation(async () => {
+        await initialize();
+        if (!navigator.onLine)
+          throw new Error('Connect to the internet before deleting cloud data.');
+        await syncPromise;
+        const response = await fetch('/api/state', { method: 'DELETE' });
+        if (!response.ok) throw new Error(`Data deletion failed (${response.status}).`);
+        const cleared = emptyData();
+        const deletedAt = new Date().toISOString();
+        await db.transaction('rw', db.records, db.meta, db.outbox, async () => {
+          await db.records.clear();
+          await db.meta.clear();
+          await db.outbox.clear();
+          await db.records.put({ key: 'app-data', data: cleared });
+          await db.meta.bulkPut([
+            { key: 'revision', value: 0 },
+            { key: 'reservedNext', value: 0 },
+            { key: 'pendingCount', value: 0 },
+            { key: 'lastSyncedAt', value: deletedAt },
+          ]);
+        });
+        serverAvailable = true;
+        publish({
+          data: cleared,
+          syncStatus: 'synced',
+          conflict: null,
+          pendingCount: 0,
+          lastSyncedAt: deletedAt,
+        });
+      }),
   };
 }

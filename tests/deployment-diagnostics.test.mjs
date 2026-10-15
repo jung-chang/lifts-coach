@@ -23,14 +23,31 @@ describe('deployment diagnostics', () => {
   });
 
   it('reports missing secrets and malformed account ID with correct placement', () => {
-    const report = diagnoseDeployment({ ...valid, CLOUDFLARE_API_TOKEN: '', CLOUDFLARE_ACCOUNT_ID: 'wrong' });
+    const report = diagnoseDeployment({
+      ...valid,
+      CLOUDFLARE_API_TOKEN: '',
+      CLOUDFLARE_ACCOUNT_ID: 'wrong',
+    });
     expect(report.ready).toBe(false);
-    expect(report.issues).toContainEqual({ name: 'CLOUDFLARE_API_TOKEN', kind: 'missing', location: 'Secrets' });
-    expect(report.issues).toContainEqual({ name: 'CLOUDFLARE_ACCOUNT_ID', kind: 'invalid', location: 'Secrets' });
+    expect(report.issues).toContainEqual({
+      name: 'CLOUDFLARE_API_TOKEN',
+      kind: 'missing',
+      location: 'Secrets',
+    });
+    expect(report.issues).toContainEqual({
+      name: 'CLOUDFLARE_ACCOUNT_ID',
+      kind: 'invalid',
+      location: 'Secrets',
+    });
   });
 
   it('reports each malformed variable independently', () => {
-    const report = diagnoseDeployment({ ...valid, D1_DATABASE_ID: 'bad', ACCESS_TEAM_DOMAIN: 'not-a-domain', ACCESS_AUD: 'REPLACE_ME' });
+    const report = diagnoseDeployment({
+      ...valid,
+      D1_DATABASE_ID: 'bad',
+      ACCESS_TEAM_DOMAIN: 'not-a-domain',
+      ACCESS_AUD: 'REPLACE_ME',
+    });
     expect(report.issues).toEqual([
       { name: 'D1_DATABASE_ID', kind: 'invalid', location: 'Secrets or Variables' },
       { name: 'ACCESS_TEAM_DOMAIN', kind: 'invalid', location: 'Secrets or Variables' },
@@ -40,7 +57,9 @@ describe('deployment diagnostics', () => {
 
   it('does not leak malicious values or permit annotation injection', () => {
     const attack = 'sensitive-value\n::error::injected';
-    const output = formatDeploymentDiagnostics(diagnoseDeployment({ ...valid, D1_DATABASE_ID: attack, CLOUDFLARE_API_TOKEN: attack }));
+    const output = formatDeploymentDiagnostics(
+      diagnoseDeployment({ ...valid, D1_DATABASE_ID: attack, CLOUDFLARE_API_TOKEN: attack }),
+    );
     expect(output).not.toContain('sensitive-value');
     expect(output).not.toContain('injected');
     expect(output.match(/::warning/g)).toHaveLength(2);

@@ -91,7 +91,7 @@ describe('workout set table', () => {
   it('shows every set in the four-column table and one top Finish workout action', async () => {
     await beginWorkout();
     expect(screen.getByRole('columnheader', { name: 'Set' })).toBeTruthy();
-    expect(screen.getByRole('columnheader', { name: 'Load (lb)' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: 'Total load (lb)' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Reps' })).toBeTruthy();
     expect(screen.getByRole('columnheader', { name: 'Done' })).toBeTruthy();
     expect(screen.getAllByRole('row')).toHaveLength(4);
