@@ -16,9 +16,9 @@ The reference preset uses Maia, Olive base, Yellow theme, Olive charts, Geist fo
 
 Train has a single next-session card containing its routine title and plain metadata, followed by simple saved-routine/history lists. Avoid duplicate headings, duplicate Settings actions, generic icon boxes and decorative statistics. Desktop uses intentional columns for the next session and routine list; mobile stacks them.
 
-The active set remains the primary interface. Keep the completion action visible on common phone sizes, use compact context above the set, and reveal reorder/substitution/bulk controls progressively. Mobile navigation has three clear tabs; desktop navigation is restrained and integrated with the shell. Preserve the in-app mini-player only while a workout is active on another screen.
+The owner's newest workout instruction replaces the focused-set interface with an always-visible table for the current exercise: Set, Load, Reps and Done. Editable values and a one-tap checkbox keep logging in the row. There are no set-status dropdowns, table show/hide controls, Next working set overview or Complete Set button. Finish workout is clearly labeled at the top only. This explicitly overrides the protected specification's original focused-set presentation without modifying that specification.
 
-On phones, Complete Set is anchored above navigation, with content and Undo space reserved around it. Exercise tabs remain on desktop; phone exercise switching sits in today's Options alongside the existing Previous/Next actions, preserving room for the current set and readable values.
+The four columns fit 320px without horizontal panning, with readable decimal loads and 44px interaction areas. Completion keeps its restrained green cue; logging and rest remain deterministic. Exercise navigation stays available, while warm-ups, additional sets, skip and optional load modes live under Options. Mobile navigation has three tabs; desktop navigation remains integrated with the shell. Preserve the mini-player only while an active workout is viewed elsewhere.
 
 Progress puts exercise strength and consistency first. Coach looks like a focused conversation, with quiet contextual actions and inspectable approvals. Routine editing and proposals share the same visual controls.
 
@@ -32,7 +32,7 @@ Exercise prescriptions keep Sets, one Reps range and Target weight together in a
 
 Pickers, exercise context, corrections and confirmations use full-width bottom drawers on phones and centered panels on desktop. Settings separates General, Profile and Coach, with a reachable Data & sync page for backup, restore, status and explicit conflict resolution. Coach starts with three concise optional prompts; evidence and approval details remain inspectable.
 
-Responsive controls favor readable values over squeezing fields beside step buttons. Active-set load/repetition values occupy two wide primary inputs; 44px step buttons and optional bodyweight load mode appear under Adjust values. Dense set tables pan inside their own container rather than expanding the page. Coach reserves space for navigation and the active-session mini-player while its conversation scrolls above the composer.
+Responsive controls favor readable values over extra buttons. Active and corrected history rows share the same compact set table; optional bodyweight/assistance modes appear under Options. Done changes immediately, offers Undo during training, and uses the normal local transaction. Unchecking preserves unrelated rest timing, and finished-history corrections never start rest. Coach reserves space for navigation and the active-session mini-player while its conversation scrolls above the composer.
 
 ## Semantics and boundaries
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { catalog } from '../shared/catalog';
 import {
   addRoutine,
@@ -16,6 +16,7 @@ import {
   repeatWorkout,
   replaceWorkoutExercise,
   scheduleEdit,
+  setDone,
   startWorkout,
   updateSet,
   validateBackup,
@@ -31,6 +32,72 @@ const base = () => {
 };
 
 describe('core domain invariants', () => {
+  it('logs any set through a checkbox once and clears its owned timer when unchecked', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-10-14T12:00:00Z'));
+      let data = base();
+      data = startWorkout(data, data.routines[0].id);
+      const workout = data.workouts[0],
+        exercise = workout.exercises[0];
+      const first = exercise.actualSets[0],
+        second = exercise.actualSets[1];
+      data = setDone(data, workout.id, exercise.id, second.id, true);
+      const deadline = data.workouts[0].restEndsAt;
+      expect(data.workouts[0].restSetId).toBe(second.id);
+      expect(data.workouts[0].exercises[0].actualSets[0].status).toBe('incomplete');
+      vi.advanceTimersByTime(1000);
+      expect(setDone(data, workout.id, exercise.id, second.id, true)).toBe(data);
+      data = setDone(data, workout.id, exercise.id, first.id, true);
+      const laterDeadline = data.workouts[0].restEndsAt;
+      expect(laterDeadline).toBeGreaterThan(deadline!);
+      data = setDone(data, workout.id, exercise.id, second.id, false);
+      expect(data.workouts[0].restEndsAt).toBe(laterDeadline);
+      expect(data.workouts[0].exercises[0].actualSets[1].completedAt).toBeUndefined();
+      data = validateBackup(JSON.parse(JSON.stringify(data)));
+      data = setDone(data, workout.id, exercise.id, first.id, false);
+      expect(data.workouts[0].restEndsAt).toBeUndefined();
+      expect(data.workouts[0].restSetId).toBeUndefined();
+      expect(data.workouts[0].exercises[0].actualSets[0].status).toBe('incomplete');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('corrects historical completion without timers and preserves unchecked skipped sets', () => {
+    let data = base();
+    data = startWorkout(data, data.routines[0].id);
+    const workout = data.workouts[0],
+      exercise = workout.exercises[0],
+      set = exercise.actualSets[0];
+    data = updateSet(data, workout.id, exercise.id, set.id, (s) => ({ ...s, status: 'skipped' }));
+    expect(setDone(data, workout.id, exercise.id, set.id, false)).toBe(data);
+    data = finishWorkout(data, workout.id);
+    data = setDone(data, workout.id, exercise.id, set.id, true);
+    expect(data.workouts[0].restEndsAt).toBeUndefined();
+    expect(data.workouts[0].exercises[0].actualSets[0].status).toBe('completed');
+    data = setDone(data, workout.id, exercise.id, set.id, false);
+    expect(data.workouts[0].exercises[0].actualSets[0].completedAt).toBeUndefined();
+    expect(data.routines[0].exercises[0].sets).toBe(exercise.sets);
+  });
+
+  it('unchecks the latest completed set in a legacy backup with no timer owner', () => {
+    let data = base();
+    data = startWorkout(data, data.routines[0].id);
+    const workout = data.workouts[0],
+      exercise = workout.exercises[0],
+      set = exercise.actualSets[0];
+    data = setDone(data, workout.id, exercise.id, set.id, true);
+    delete data.workouts[0].restSetId;
+    data = validateBackup(JSON.parse(JSON.stringify(data)));
+    expect(
+      setDone(data, workout.id, exercise.id, set.id, false).workouts[0].restEndsAt,
+    ).toBeUndefined();
+    const malformed = structuredClone(data);
+    malformed.workouts[0].restSetId = 'missing-set';
+    expect(() => validateBackup(malformed)).toThrow('invalid rest timer owner');
+  });
+
   it('deletes a routine while preserving workout snapshots and cleaning its future edits', () => {
     let data = base();
     const removed = data.routines[0];

@@ -1942,20 +1942,6 @@ summary {
   .workout-exercise-tabs {
     display: none;
   }
-  .workout-focus {
-    padding-bottom: 80px;
-  }
-  .workout-complete-action {
-    position: fixed;
-    z-index: 21;
-    left: var(--screen-padding);
-    bottom: calc(92px + env(safe-area-inset-bottom));
-    width: calc(100% - 2 * var(--screen-padding)) !important;
-    margin-top: 0 !important;
-  }
-  .app-shell:has(.workout-complete-action) .toast {
-    bottom: calc(154px + env(safe-area-inset-bottom));
-  }
   .routine-editor-item {
     padding: 12px;
   }
@@ -1978,5 +1964,129 @@ summary {
   }
   .routine-primary-fields input {
     padding-inline: 6px;
+  }
+}
+
+/* Always-visible set logging: four columns fit narrow phones without panning. */
+.workout-table-card {
+  min-width: 0;
+  padding: 16px;
+}
+.compact-set-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.compact-set-table th {
+  padding: 8px 2px;
+  text-align: left;
+  color: var(--sub);
+  font-size: 12px;
+  font-weight: 500;
+}
+.compact-set-table td {
+  padding: 6px 2px;
+  border-top: 1px solid var(--border);
+  vertical-align: middle;
+}
+.compact-set-table th:first-child {
+  width: 32px;
+}
+.compact-set-table th:nth-child(3) {
+  width: 68px;
+}
+.compact-set-table th:last-child {
+  width: 52px;
+  text-align: center;
+}
+.compact-set-table td:last-child {
+  text-align: center;
+}
+.compact-set-table .input {
+  width: 100%;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 6px 4px;
+  font-size: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.compact-set-table .input::-webkit-inner-spin-button,
+.compact-set-table .input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.compact-set-table .input[aria-invalid='true'] {
+  border-color: var(--red);
+}
+.set-done-control {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  min-height: 44px;
+  margin: 0 auto;
+  cursor: pointer;
+  border-radius: 12px;
+}
+.set-done-control input {
+  width: 20px;
+  height: 20px;
+  min-height: 0;
+  margin: 0;
+  accent-color: var(--green);
+}
+.set-done-control:has(input:focus-visible) {
+  outline: 2px solid var(--olive);
+  outline-offset: 1px;
+}
+.compact-set-table .set-row-completed {
+  background: var(--green-soft);
+}
+.compact-set-table .set-row-skipped {
+  opacity: 0.7;
+}
+.set-table-validation {
+  margin: 8px 0 0;
+  color: var(--red);
+  font-size: 12px;
+}
+.set-table-mode-hint {
+  display: block;
+  color: var(--sub);
+  font-size: 10px;
+  line-height: 1.2;
+}
+.workout-table-options > summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--sub);
+}
+.workout-table-options .row {
+  flex-wrap: wrap;
+}
+.workout-table-options .stack {
+  margin-top: 10px;
+}
+@media (max-width: 700px) {
+  .workout-table-card {
+    padding: 12px;
+  }
+  .workout-focus > .page-heading {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+  .workout-focus > .page-heading > div:first-child {
+    width: 100%;
+  }
+  .workout-focus > .page-heading > .row {
+    justify-content: space-between;
   }
 }

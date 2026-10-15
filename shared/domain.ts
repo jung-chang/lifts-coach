@@ -305,6 +305,12 @@ export function completeSet(
 ): AppData {
   const workout = data.workouts.find((x) => x.id === workoutId);
   assert(workout?.status === 'active', 'Only an active workout can complete sets');
+  const exact = workout.exercises.find((e) => e.id === exerciseId);
+  const matches = exact ? [exact] : workout.exercises.filter((e) => e.exerciseId === exerciseId);
+  assert(matches.length === 1, 'Workout exercise target is missing or ambiguous');
+  const set = matches[0].actualSets.find((s) => s.id === setId);
+  assert(set, 'Set not found');
+  if (set.status === 'completed') return data;
   const updated = updateSet(data, workoutId, exerciseId, setId, (s) => ({
       ...s,
       status: 'completed',
@@ -315,9 +321,34 @@ export function completeSet(
   return {
     ...updated,
     workouts: updated.workouts.map((x) =>
-      x.id === workoutId ? { ...x, restEndsAt: Date.now() + ex.restSeconds * 1000 } : x,
+      x.id === workoutId
+        ? { ...x, restEndsAt: Date.now() + ex.restSeconds * 1000, restSetId: setId }
+        : x,
     ),
   };
+}
+/** Checkbox logging is idempotent and historical corrections never start a timer. */
+export function setDone(
+  data: AppData,
+  workoutId: string,
+  exerciseId: string,
+  setId: string,
+  done: boolean,
+): AppData {
+  const workout = data.workouts.find((w) => w.id === workoutId);
+  assert(workout, 'Workout not found');
+  const exact = workout.exercises.find((e) => e.id === exerciseId);
+  const matches = exact ? [exact] : workout.exercises.filter((e) => e.exerciseId === exerciseId);
+  assert(matches.length === 1, 'Workout exercise target is missing or ambiguous');
+  const set = matches[0].actualSets.find((s) => s.id === setId);
+  assert(set, 'Set not found');
+  if ((set.status === 'completed') === done) return data;
+  if (done && workout.status === 'active') return completeSet(data, workoutId, exerciseId, setId);
+  return updateSet(data, workoutId, exerciseId, setId, (s) => ({
+    ...s,
+    status: done ? 'completed' : 'incomplete',
+    completedAt: done ? now() : undefined,
+  }));
 }
 export function updateSet(
   data: AppData,
@@ -358,6 +389,15 @@ export function updateSet(
       set.kind === 'working' &&
       changed.status === 'incomplete' &&
       changed.weight !== set.weight;
+  const latestCompleted = w.exercises
+    .flatMap((e) => e.actualSets)
+    .filter((s) => s.status === 'completed' && s.completedAt)
+    .sort((a, b) => Date.parse(b.completedAt!) - Date.parse(a.completedAt!))[0];
+  const clearsRest =
+    w.status === 'active' &&
+    set.status === 'completed' &&
+    changed.status !== 'completed' &&
+    (w.restSetId === setId || (!w.restSetId && latestCompleted?.id === setId));
   return {
     ...data,
     workouts: data.workouts.map((x) =>
@@ -365,7 +405,8 @@ export function updateSet(
         ? x
         : {
             ...x,
-            restEndsAt: x.restEndsAt,
+            restEndsAt: clearsRest ? undefined : x.restEndsAt,
+            restSetId: clearsRest ? undefined : x.restSetId,
             updatedAt: stamp,
             exercises: x.exercises.map((y) =>
               y !== ex
@@ -468,6 +509,7 @@ export function finishWorkout(
             completedAt: stamp,
             updatedAt: stamp,
             restEndsAt: undefined,
+            restSetId: undefined,
             feeling,
             notes,
             exercises: w.exercises.map((e) => ({
@@ -1149,6 +1191,17 @@ export function validateBackup(input: unknown): AppData {
         )
           fail('invalid set');
     }
+    if (
+      w.restSetId !== undefined &&
+      (typeof w.restSetId !== 'string' ||
+        !w.restSetId ||
+        w.status !== 'active' ||
+        !Number.isFinite(w.restEndsAt) ||
+        !w.exercises.some((e) =>
+          e.actualSets.some((s) => s.id === w.restSetId && s.status === 'completed'),
+        ))
+    )
+      fail('invalid rest timer owner');
   }
   if (activeCount > 1) fail('more than one active workout');
   for (const s of d.scheduledEdits) {

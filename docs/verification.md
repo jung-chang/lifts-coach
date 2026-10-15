@@ -4,14 +4,22 @@ The original **Lifts Coach** prototype was verified on October 13, 2026 with the
 
 ## Automated checks observed
 
-- 83 tests passed: workout/edit invariants, real IndexedDB queue behavior, signed Access-token authorization, UTF-8 chunk boundaries, private deployment configuration/diagnostics, and the full-page editor, deletion and input regressions described below.
+- 99 tests passed: workout/edit invariants, real IndexedDB queue behavior, signed Access-token authorization, UTF-8 chunk boundaries, private deployment configuration/diagnostics, and the editor, deletion and set-table regressions described below.
 - Production TypeScript/Vite build passed and generated an asset precache for the PWA.
 - Wrangler deployment dry-run passed. This verifies packaging, not a live deployment.
 - Local Worker/D1 integration passed: persistence, duplicate retries, operation/content binding, concurrent revision conflicts, validation, export and secret-free provider metadata.
 - Large local D1 integration passed: a payload above the 2 MB row limit round-tripped through chunk storage, shrinking removed stale chunks, and concurrent readers observed coherent payloads/revisions.
 - Public-source credential-pattern check passed. Candidate paths and source were also reviewed manually; pattern matching cannot establish that arbitrary content is safe to publish.
 
-## Browser checks observed
+## Always-visible set table checks
+
+The newest owner instruction replaces the focused current-set layout with an always-visible current-exercise table: Set, Load, Reps and Done. Active and corrected history rows share editable load/repetition fields and checkboxes; there is no status dropdown or Complete Set action. Finish workout appears at the top only. The protected specification remains unchanged.
+
+Automated checks verify that two rapid Done taps preserve the latest Undo snapshot and restore the earlier timer owner, redundant completion does not restart rest, unchecking clears only the related timer, and history corrections never start rest. Done immediately followed by Finish produces the correct saved summary; a stale active Done event after Finish cannot alter completed history. Input tests cover decimal edits before Done, negative/over-limit validation, focused partial decimals during another row's update, acknowledged edits followed by Undo, and unit changes without interpreting a pounds draft as kilograms. A failed history write preserves the edited load for a successful retry instead of acknowledging unsaved data. Checkbox inputs have native accessible names.
+
+The browser observations below describe earlier iterations; their focused-set completion buttons and horizontally panned set tables have been superseded by this table refinement.
+
+## Earlier browser checks observed
 
 Using synthetic QA data, verified manual routine creation and exercise selection, workout start, completion and Undo with timer restoration, mini-player visibility on Progress, reload recovery, incomplete finishing, post-workout load corrections, repeat-from-history and lb/kg display conversion.
 

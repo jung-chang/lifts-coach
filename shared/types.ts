@@ -50,6 +50,7 @@ export interface Workout {
   status: 'active' | 'finished';
   exercises: WorkoutExercise[];
   restEndsAt?: number;
+  restSetId?: string;
   feeling?: string;
   notes?: string;
   updatedAt: string;

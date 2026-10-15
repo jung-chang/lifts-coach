@@ -4,9 +4,7 @@ import {
   ArrowLeft,
   ArrowRight,
   BarChart3,
-  Check,
   CheckCircle2,
-  ChevronDown,
   Clock3,
   Dumbbell,
   ArrowDown,
@@ -14,7 +12,6 @@ import {
   FileDown,
   FileUp,
   History,
-  MoreHorizontal,
   Play,
   Plus,
   RotateCcw,
@@ -28,7 +25,8 @@ import {
 import {
   startWorkout,
   repeatWorkout,
-  completeSet,
+  setDone,
+  addWorkoutSet,
   updateSet,
   finishWorkout,
   applyProposal,
@@ -58,6 +56,7 @@ import { Sheet as Dialog } from './components/ui/Sheet';
 import { ProposalCard } from './components/ProposalCard';
 import { Sheet } from './components/ui/Sheet';
 import { RoutineEditor } from './components/RoutineEditor';
+import { SetTable } from './components/SetTable';
 import {
   applyInspectedRoutineProposal,
   commitRoutineDraft,
@@ -98,6 +97,11 @@ const scopeLabel = (s: string) =>
     : s === 'next_workout'
       ? 'Next workout'
       : 'Routine going forward';
+const applyDoneValues = (data: AppData, workoutId: string, exerciseId: string, setId: string, patch?: Partial<WorkoutSet>) => {
+  const set = data.workouts.find((item) => item.id === workoutId)?.exercises.find((item) => item.id === exerciseId)?.actualSets.find((item) => item.id === setId);
+  const changed = set && patch && (['weight', 'reps'] as const).some((field) => patch[field] !== undefined && patch[field] !== set[field]);
+  return changed ? updateSet(data, workoutId, exerciseId, setId, (current) => ({ ...current, ...patch })) : data;
+};
 
 function App() {
   const store = useAppStore();
@@ -115,7 +119,6 @@ function App() {
   const [notice, setNotice] = useState('');
   const [workoutId, setWorkoutId] = useState<string | null>(null);
   const [currentEx, setCurrentEx] = useState(0);
-  const [showTable, setShowTable] = useState(false);
   const [undo, setUndo] = useState<{ data: AppData; label: string } | null>(null);
   const [profileDraft, setProfileDraft] = useState<any>(null);
   const [settingsTab, setSettingsTab] = useState<'general' | 'profile' | 'coach'>('general');
@@ -189,15 +192,20 @@ function App() {
   };
   const mutate = (fn: (d: AppData) => AppData, label?: string) => {
     if (!data) return;
-    setUndo(label ? { data, label } : null);
-    void safeUpdate(fn);
+    let before: AppData | undefined;
+    let changed = false;
+    void safeUpdate((d) => {
+      const next = fn(d);
+      changed = next !== d;
+      if (changed) before = d;
+      return next;
+    }).then((ok) => {
+      if (ok && changed) setUndo(label && before ? { data: before, label } : null);
+    });
   };
   const setChange = (fn: (d: AppData) => AppData, label = 'Set updated') => mutate(fn, label);
   const activeExercise =
     workout?.exercises[Math.min(currentEx, Math.max(0, (workout?.exercises.length || 1) - 1))];
-  const activeSet =
-    activeExercise?.actualSets.find((s) => s.status === 'incomplete' && s.kind === 'warmup') ||
-    activeExercise?.actualSets.find((s) => s.status === 'incomplete' && s.kind === 'working');
   const exerciseById = (eid: string) => data && allExercises(data).find((e) => e.id === eid);
   const start = (routineId: string) => {
     try {
@@ -395,43 +403,68 @@ function App() {
       setChatBusy(false);
     }
   };
-  const logActiveSet = () => {
-    if (!data || !workout || !activeExercise || !activeSet) return;
-    const before = data;
-    void safeUpdate((d) => completeSet(d, workout.id, activeExercise.id, activeSet.id)).then(
-      (ok) => {
-        if (ok) {
-          setUndo({ data: before, label: 'Set completed' });
-          say('Set logged');
-        }
-      },
-    );
-  };
   const editSet = (exerciseId: string, set: WorkoutSet, patch: Partial<WorkoutSet>) => {
     if (!data || !workout) return;
-    setChange(
-      (d) => updateSet(d, workout.id, exerciseId, set.id, (s) => ({ ...s, ...patch })),
-      'Set updated',
-    );
+    let changed = false;
+    let before: AppData | undefined;
+    void safeUpdate((d) => {
+      if (!d.workouts.some((item) => item.id === workout.id && item.status === 'active')) return d;
+      const next = updateSet(d, workout.id, exerciseId, set.id, (s) => ({ ...s, ...patch }));
+      changed = next !== d;
+      if (changed) before = d;
+      return next;
+    }).then((ok) => {
+      if (ok && changed && before) setUndo({ data: before, label: 'Set updated' });
+    });
   };
   const setState = (exerciseId: string, set: WorkoutSet, status: WorkoutSet['status']) => {
     if (!data || !workout) return;
-    const before = data;
-    void safeUpdate((d) =>
-      updateSet(d, workout.id, exerciseId, set.id, (s) => ({
+    let before: AppData | undefined;
+    void safeUpdate((d) => {
+      if (!d.workouts.some((item) => item.id === workout.id && item.status === 'active')) return d;
+      before = d;
+      return updateSet(d, workout.id, exerciseId, set.id, (s) => ({
         ...s,
         status,
         completedAt: status === 'completed' ? new Date().toISOString() : undefined,
-      })),
-    );
-    setUndo({ data: before, label: status === 'skipped' ? 'Set skipped' : 'Set restored' });
-    say(status === 'skipped' ? 'Set skipped' : 'Set restored');
+      }));
+    }).then((ok) => {
+      if (!ok || !before) return;
+      setUndo({ data: before, label: status === 'skipped' ? 'Set skipped' : 'Set restored' });
+      say(status === 'skipped' ? 'Set skipped' : 'Set restored');
+    });
+  };
+  const toggleSetDone = (
+    targetWorkout: Workout,
+    exerciseId: string,
+    setId: string,
+    done: boolean,
+    patch?: Partial<WorkoutSet>,
+  ) => {
+    let changed = false;
+    let before: AppData | undefined;
+    void safeUpdate((d) => {
+      if (!d.workouts.some((item) => item.id === targetWorkout.id && item.status === 'active'))
+        return d;
+      const edited = done ? applyDoneValues(d, targetWorkout.id, exerciseId, setId, patch) : d;
+      const next = setDone(edited, targetWorkout.id, exerciseId, setId, done);
+      changed = next !== d;
+      if (changed && targetWorkout.status === 'active') before = d;
+      return next;
+    }).then((ok) => {
+      if (ok && changed && targetWorkout.status === 'active' && before) {
+        setUndo({ data: before, label: done ? 'Set completed' : 'Set restored' });
+        say(done ? 'Set logged' : 'Set restored');
+      }
+    });
   };
   const skipRest = () => {
     if (!data || !workout) return;
     void safeUpdate((d) => ({
       ...d,
-      workouts: d.workouts.map((w) => (w.id === workout.id ? { ...w, restEndsAt: undefined } : w)),
+      workouts: d.workouts.map((w) =>
+        w.id === workout.id ? { ...w, restEndsAt: undefined, restSetId: undefined } : w,
+      ),
     }));
   };
   const undoLast = () => {
@@ -451,17 +484,20 @@ function App() {
   };
   const finish = () => {
     if (!data || !workout) return;
-    const suggestions = progressionProposals(data, workout.id);
-    const completedAt = new Date().toISOString();
+    let suggestions: Proposal[] = [];
+    let finishedSnapshot: Workout | undefined;
     void safeUpdate((d) => {
       const finished = finishWorkout(d, workout.id);
+      finishedSnapshot = finished.workouts.find((item) => item.id === workout.id);
+      suggestions = progressionProposals(finished, workout.id);
       return { ...finished, proposals: [...finished.proposals, ...suggestions] };
     }).then((ok) => {
       if (ok) {
         setWorkoutId(null);
+        setUndo(null);
         setFinishFeeling('');
         setFinishNotes('');
-        setSummaryWorkout({ ...workout, status: 'finished', completedAt, restEndsAt: undefined });
+        if (finishedSnapshot) setSummaryWorkout(finishedSnapshot);
         setModal('summary');
         say(
           suggestions.length
@@ -501,6 +537,52 @@ function App() {
           }
         : prev,
     );
+  const toggleCorrectionDone = (
+    workout: Workout,
+    exercise: WorkoutExercise,
+    setId: string,
+    done: boolean,
+    patch?: Partial<WorkoutSet>,
+  ) => {
+    let updated: WorkoutSet | undefined;
+    void safeUpdate((d) => {
+      if (!d.workouts.some((item) => item.id === workout.id && item.status === 'finished'))
+        return d;
+      const edited = done ? applyDoneValues(d, workout.id, exercise.id, setId, patch) : d;
+      const next = setDone(edited, workout.id, exercise.id, setId, done);
+      if (next !== d)
+        updated = next.workouts
+          .find((item) => item.id === workout.id)
+          ?.exercises.find((item) => item.id === exercise.id)
+          ?.actualSets.find((item) => item.id === setId);
+      return next;
+    }).then((ok) => {
+      if (ok && updated) updateCorrectionSnapshot(setId, updated);
+    });
+  };
+  const editCorrectionSet = (
+    workout: Workout,
+    exercise: WorkoutExercise,
+    setId: string,
+    patch: Partial<WorkoutSet>,
+  ) => {
+    let updated: WorkoutSet | undefined;
+    void safeUpdate((d) => {
+      if (!d.workouts.some((item) => item.id === workout.id && item.status === 'finished'))
+        return d;
+      const next = updateSet(d, workout.id, exercise.id, setId, (current) => ({
+        ...current,
+        ...patch,
+      }));
+      updated = next.workouts
+        .find((item) => item.id === workout.id)
+        ?.exercises.find((item) => item.id === exercise.id)
+        ?.actualSets.find((item) => item.id === setId);
+      return next;
+    }).then((ok) => {
+      if (ok && updated) updateCorrectionSnapshot(setId, updated);
+    });
+  };
   const exportBackup = async () => {
     const json = await store.exportData();
     const url = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
@@ -791,13 +873,12 @@ function App() {
                   workout={workout!}
                   currentEx={currentEx}
                   setCurrentEx={setCurrentEx}
-                  showTable={showTable}
-                  setShowTable={setShowTable}
                   activeExercise={activeExercise}
-                  activeSet={activeSet}
-                  logSet={logActiveSet}
                   editSet={editSet}
                   setState={setState}
+                  toggleDone={(exerciseId: string, setId: string, done: boolean, patch?: Partial<WorkoutSet>) =>
+                    toggleSetDone(workout!, exerciseId, setId, done, patch)
+                  }
                   timerNow={timerNow}
                   skipRest={skipRest}
                   finish={finish}
@@ -1282,106 +1363,16 @@ function App() {
             <div className="muted small">
               {dateLabel(correction.workout.startedAt)} · {correction.workout.name}
             </div>
-            <p className="table-pan-hint">Swipe sideways to view all columns.</p>
-            <div className="set-table-scroll">
-              <table className="set-table">
-                <thead>
-                  <tr>
-                    <th>Set</th>
-                    <th>Load ({data.settings.unit})</th>
-                    <th>Reps</th>
-                    <th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {correction.exercise.actualSets.map((s, i) => (
-                    <tr key={s.id} className={s.status === 'completed' ? 'set-row-completed' : ''}>
-                      <td>{s.kind === 'warmup' ? 'W' : i + 1}</td>
-                      <td>
-                        <input
-                          className="input"
-                          aria-label={`Correct set ${i + 1} weight`}
-                          type="number"
-                          min="0"
-                          value={toDisplayWeight(s.weight, data.settings.unit)}
-                          onChange={(e) => {
-                            const weight = fromDisplayWeight(
-                              Number(e.target.value) || 0,
-                              data.settings.unit,
-                            );
-                            void safeUpdate((d) =>
-                              updateSet(
-                                d,
-                                correction.workout.id,
-                                correction.exercise.id,
-                                s.id,
-                                (x) => ({ ...x, weight }),
-                              ),
-                            );
-                            updateCorrectionSnapshot(s.id, { weight });
-                          }}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className="input"
-                          aria-label={`Correct set ${i + 1} reps`}
-                          type="number"
-                          min="0"
-                          value={s.reps}
-                          onChange={(e) => {
-                            const reps = Number(e.target.value) || 0;
-                            void safeUpdate((d) =>
-                              updateSet(
-                                d,
-                                correction.workout.id,
-                                correction.exercise.id,
-                                s.id,
-                                (x) => ({ ...x, reps }),
-                              ),
-                            );
-                            updateCorrectionSnapshot(s.id, { reps });
-                          }}
-                        />
-                      </td>
-                      <td>
-                        <select
-                          className="select input-sm"
-                          aria-label={`Correct set ${i + 1} status`}
-                          value={s.status}
-                          onChange={(e) => {
-                            const status = e.target.value as WorkoutSet['status'];
-                            void safeUpdate((d) =>
-                              updateSet(
-                                d,
-                                correction.workout.id,
-                                correction.exercise.id,
-                                s.id,
-                                (x) => ({
-                                  ...x,
-                                  status,
-                                  completedAt:
-                                    status === 'completed' ? new Date().toISOString() : undefined,
-                                }),
-                              ),
-                            );
-                            updateCorrectionSnapshot(s.id, {
-                              status,
-                              completedAt:
-                                status === 'completed' ? new Date().toISOString() : undefined,
-                            });
-                          }}
-                        >
-                          <option value="incomplete">Planned</option>
-                          <option value="completed">Done</option>
-                          <option value="skipped">Skipped</option>
-                        </select>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <SetTable
+              exercise={correction.exercise}
+              unit={data.settings.unit}
+              onEdit={(set, patch) => {
+                editCorrectionSet(correction.workout, correction.exercise, set.id, patch);
+              }}
+              onDone={(setId, done, patch) =>
+                toggleCorrectionDone(correction.workout, correction.exercise, setId, done, patch)
+              }
+            />
             <Button variant="primary" onClick={() => setCorrection(null)}>
               Done
             </Button>
@@ -1419,13 +1410,10 @@ function WorkoutScreen({
   workout,
   currentEx,
   setCurrentEx,
-  showTable,
-  setShowTable,
   activeExercise,
-  activeSet,
-  logSet,
   editSet,
   setState,
+  toggleDone,
   timerNow,
   skipRest,
   finish,
@@ -1440,8 +1428,6 @@ function WorkoutScreen({
   const restLeft = workout.restEndsAt
     ? Math.max(0, Math.ceil((workout.restEndsAt - timerNow) / 1000))
     : 0;
-  const selectedEx = (id: string) =>
-    workout.exercises.findIndex((e: WorkoutExercise) => e.id === id);
   const replaceToday = (replacementId: string) => {
     const replacement = allExercises(data).find((e) => e.id === replacementId);
     if (!replacement || !ex) return;
@@ -1450,10 +1436,6 @@ function WorkoutScreen({
       'Exercise replaced for today',
     );
     say(`${replacement.name} substituted for today`);
-  };
-  const adjust = (field: 'weight' | 'reps', delta: number) => {
-    if (!ex || !activeSet) return;
-    editSet(ex.id, activeSet, { [field]: Math.max(0, (activeSet[field] || 0) + delta) });
   };
   const restChange = (seconds: number) =>
     mutate((d: AppData) => ({
@@ -1507,8 +1489,8 @@ function WorkoutScreen({
             <Sparkles size={16} />
             <span className="desktop-only">Coach</span>
           </Button>
-          <Button variant="ghost" size="icon" aria-label="Finish workout" onClick={finish}>
-            <MoreHorizontal />
+          <Button variant="primary" onClick={finish}>
+            Finish workout
           </Button>
         </div>
       </div>
@@ -1555,24 +1537,7 @@ function WorkoutScreen({
                   {weightLabel(ex, unit)} · target {ex.sets} × {ex.repRange[0]}–{ex.repRange[1]}
                 </span>
               </div>
-              <button className="icon-button" aria-label="Exercise details">
-                <MoreHorizontal size={20} />
-              </button>
             </div>
-            {ex.actualSets.filter((s: WorkoutSet) => s.kind === 'working').length > 0 && (
-              <div className="row" style={{ gap: 6, marginTop: 10 }}>
-                {ex.actualSets
-                  .filter((s: WorkoutSet) => s.kind === 'working')
-                  .map((s: WorkoutSet, i: number) => (
-                    <span
-                      key={s.id}
-                      className={`pill ${s.status === 'completed' ? 'pill-green' : s.status === 'skipped' ? 'pill-red' : ''}`}
-                    >
-                      {s.status === 'completed' ? <Check size={12} /> : null}S{i + 1}
-                    </span>
-                  ))}
-              </div>
-            )}
           </div>
           {workout.restEndsAt && (
             <div className="rest-box" style={{ marginBottom: 10 }}>
@@ -1596,336 +1561,12 @@ function WorkoutScreen({
               </Button>
             </div>
           )}
-          {activeSet ? (
-            <div className="card set-focus active-set-card">
-              <div className="row space-between">
-                <div>
-                  <div className="set-number">
-                    {activeSet.kind === 'warmup' ? 'Warm-up set' : 'Next working set'}
-                  </div>
-                  <div className="muted small" style={{ marginTop: 5 }}>
-                    Set{' '}
-                    {ex.actualSets.filter((s: WorkoutSet) => s.status === 'completed').length + 1} ·
-                    target {ex.repRange[0]}–{ex.repRange[1]} reps
-                  </div>
-                </div>
-                <Button size="sm" variant="ghost" onClick={() => setShowTable(!showTable)}>
-                  {showTable ? 'Hide sets' : 'All sets'} <ChevronDown size={14} />
-                </Button>
-              </div>
-              <div className="profile-grid set-entry-grid" style={{ marginTop: 16 }}>
-                {(['weight', 'reps'] as const).map((field) => (
-                  <div key={field}>
-                    <div className="field-label" style={{ textAlign: 'center', marginBottom: 8 }}>
-                      {field === 'weight'
-                        ? (activeSet.loadMode || ex.loadMode) === 'per-dumbbell'
-                          ? `Load (${unit})`
-                          : (activeSet.loadMode || ex.loadMode) === 'assistance'
-                            ? `Assist (${unit})`
-                            : (activeSet.loadMode || ex.loadMode) === 'bodyweight'
-                              ? `Added (${unit})`
-                              : `Weight (${unit})`
-                        : 'Reps'}
-                    </div>
-                    <div className="number-control set-primary-value">
-                      <input
-                        aria-label={field}
-                        className="input"
-                        inputMode="decimal"
-                        type="number"
-                        min="0"
-                        step={field === 'weight' ? '0.5' : '1'}
-                        value={
-                          field === 'weight'
-                            ? toDisplayWeight(activeSet.weight, unit)
-                            : activeSet.reps
-                        }
-                        onChange={(e) =>
-                          editSet(ex.id, activeSet, {
-                            [field]:
-                              field === 'weight'
-                                ? fromDisplayWeight(Number(e.target.value) || 0, unit)
-                                : Number(e.target.value) || 0,
-                          })
-                        }
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <details className="set-adjust-options">
-                <summary>Adjust values</summary>
-                <div className="set-step-controls">
-                  {(['weight', 'reps'] as const).map((field) => (
-                    <div className="row" key={field}>
-                      <span>{field === 'weight' ? 'Weight' : 'Reps'}</span>
-                      <Button
-                        size="icon"
-                        aria-label={`Decrease ${field}`}
-                        onClick={() => adjust(field, -(field === 'weight' ? 2.5 : 1))}
-                      >
-                        −
-                      </Button>
-                      <Button
-                        size="icon"
-                        aria-label={`Increase ${field}`}
-                        onClick={() => adjust(field, field === 'weight' ? 2.5 : 1)}
-                      >
-                        +
-                      </Button>
-                    </div>
-                  ))}
-                  {ex.loadMode === 'bodyweight' && (
-                    <div className="form-field">
-                      <label htmlFor="bodyweight-mode">Record this set as</label>
-                      <select
-                        id="bodyweight-mode"
-                        className="select"
-                        value={activeSet.loadMode || 'bodyweight'}
-                        onChange={(e) =>
-                          editSet(ex.id, activeSet, {
-                            loadMode: e.target.value as WorkoutSet['loadMode'],
-                          })
-                        }
-                      >
-                        <option value="bodyweight">Added weight</option>
-                        <option value="assistance">Assistance weight</option>
-                      </select>
-                    </div>
-                  )}
-                </div>
-              </details>
-              <p className="muted small set-prefill-note">
-                {data.workouts.some(
-                  (w: Workout) =>
-                    w.status === 'finished' &&
-                    w.exercises.some(
-                      (item: WorkoutExercise) =>
-                        item.exerciseId === ex.exerciseId &&
-                        item.actualSets.some((s: WorkoutSet) => s.status === 'completed'),
-                    ),
-                )
-                  ? 'Prefilled from your latest set'
-                  : 'Routine targets · edit for today'}
-              </p>
-              <Button
-                variant="success"
-                size="lg"
-                className="workout-complete-action"
-                style={{ width: '100%', marginTop: 18 }}
-                onClick={logSet}
-              >
-                <CheckCircle2 size={19} />
-                Complete set
-              </Button>
-              <div className="row space-between" style={{ marginTop: 10 }}>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    const s = ex.actualSets.find((x: WorkoutSet) => x.status === 'incomplete');
-                    if (s) setState(ex.id, s, 'skipped');
-                  }}
-                >
-                  <SkipForward size={15} />
-                  Skip set
-                </Button>
-                <Button variant="ghost" size="sm" onClick={markExerciseSkipped}>
-                  Skip exercise
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <div className="card card-pad" style={{ textAlign: 'center' }}>
-              <div className="empty-icon">
-                <CheckCircle2 />
-              </div>
-              <h3>Exercise complete</h3>
-              <p className="muted small">All planned sets are logged.</p>
-              <Button
-                onClick={() => setCurrentEx(Math.min(currentEx + 1, workout.exercises.length - 1))}
-              >
-                Next exercise <ArrowRight size={16} />
-              </Button>
-            </div>
-          )}
-          {showTable && (
-            <div className="card card-pad" style={{ marginTop: 14 }}>
-              <div className="row space-between set-table-header">
-                <div>
-                  <h3>Set table</h3>
-                  <div className="muted small">Edit any set, including completed sets.</div>
-                </div>
-                <div className="set-table-actions">
-                  <Button
-                    size="sm"
-                    onClick={() =>
-                      mutate(
-                        (d: AppData) => ({
-                          ...d,
-                          workouts: d.workouts.map((w: Workout) =>
-                            w.id === workout.id
-                              ? {
-                                  ...w,
-                                  exercises: w.exercises.map((e: WorkoutExercise) =>
-                                    e.id === ex.id
-                                      ? {
-                                          ...e,
-                                          actualSets: [
-                                            ...e.actualSets,
-                                            {
-                                              id: id('set'),
-                                              weight: e.targetWeight,
-                                              reps: e.repRange[0],
-                                              kind: 'working',
-                                              status: 'incomplete',
-                                              updatedAt: new Date().toISOString(),
-                                              loadMode: e.loadMode,
-                                            },
-                                          ],
-                                        }
-                                      : e,
-                                  ),
-                                }
-                              : w,
-                          ),
-                        }),
-                        'Set added',
-                      )
-                    }
-                  >
-                    <Plus size={15} />
-                    Add set
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() =>
-                      mutate(
-                        (d: AppData) => ({
-                          ...d,
-                          workouts: d.workouts.map((w: Workout) =>
-                            w.id === workout.id
-                              ? {
-                                  ...w,
-                                  exercises: w.exercises.map((e: WorkoutExercise) =>
-                                    e.id === ex.id
-                                      ? {
-                                          ...e,
-                                          actualSets: [
-                                            {
-                                              id: id('set'),
-                                              weight: e.targetWeight,
-                                              reps: e.repRange[0],
-                                              kind: 'warmup',
-                                              status: 'incomplete',
-                                              updatedAt: new Date().toISOString(),
-                                              loadMode: e.loadMode,
-                                            },
-                                            ...e.actualSets,
-                                          ],
-                                        }
-                                      : e,
-                                  ),
-                                }
-                              : w,
-                          ),
-                        }),
-                        'Warm-up set added',
-                      )
-                    }
-                  >
-                    <Plus size={15} />
-                    Warm-up
-                  </Button>
-                </div>
-              </div>
-              <p className="table-pan-hint">Swipe sideways to view all columns.</p>
-              <div className="set-table-scroll">
-                <table className="set-table">
-                  <thead>
-                    <tr>
-                      <th>Set</th>
-                      <th>Load ({unit})</th>
-                      <th>Reps</th>
-                      <th>State</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ex.actualSets.map((s: WorkoutSet, i: number) => (
-                      <tr
-                        key={s.id}
-                        className={
-                          s.status === 'completed'
-                            ? 'set-row-completed'
-                            : s.status === 'skipped'
-                              ? 'set-row-skipped'
-                              : ''
-                        }
-                      >
-                        <td>{s.kind === 'warmup' ? 'W' : i + 1}</td>
-                        <td>
-                          <input
-                            className="input"
-                            aria-label={`Set ${i + 1} weight`}
-                            type="number"
-                            min="0"
-                            value={toDisplayWeight(s.weight, unit)}
-                            onChange={(e) =>
-                              editSet(ex.id, s, {
-                                weight: fromDisplayWeight(Number(e.target.value) || 0, unit),
-                              })
-                            }
-                          />
-                        </td>
-                        <td>
-                          <input
-                            className="input"
-                            aria-label={`Set ${i + 1} reps`}
-                            type="number"
-                            min="0"
-                            value={s.reps}
-                            onChange={(e) =>
-                              editSet(ex.id, s, { reps: Number(e.target.value) || 0 })
-                            }
-                          />
-                        </td>
-                        <td>
-                          <select
-                            className="select input-sm"
-                            aria-label={`Set ${i + 1} status`}
-                            value={s.status}
-                            onChange={(e) => setState(ex.id, s, e.target.value)}
-                          >
-                            <option value="incomplete">Planned</option>
-                            <option value="completed">Done</option>
-                            <option value="skipped">Skipped</option>
-                          </select>
-                        </td>
-                        <td>
-                          <button
-                            className="icon-button"
-                            aria-label="Toggle warm-up"
-                            title="Toggle warm-up"
-                            onClick={() =>
-                              editSet(ex.id, s, {
-                                kind: s.kind === 'warmup' ? 'working' : 'warmup',
-                              })
-                            }
-                          >
-                            <span style={{ fontSize: 11, fontWeight: 500 }}>
-                              {s.kind === 'warmup' ? 'W' : '·'}
-                            </span>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
+          <SetTable
+            exercise={ex}
+            unit={unit}
+            onEdit={(set, patch) => editSet(ex.id, set, patch)}
+            onDone={(setId, done, patch) => toggleDone(ex.id, setId, done, patch)}
+          />
           <div className="row space-between" style={{ marginTop: 17 }}>
             <Button
               variant="secondary"
@@ -1945,9 +1586,61 @@ function WorkoutScreen({
           </div>
           <details className="card card-pad workout-options" style={{ marginTop: 16 }}>
             <summary>
-              <b>Make today’s workout yours</b>
-              <span className="muted small">Reorder or substitute for today</span>
+              <b>Options</b>
+              <span className="muted small">Set and exercise controls</span>
             </summary>
+            <div className="row" style={{ flexWrap: 'wrap', marginTop: 14 }}>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  mutate((d: AppData) => addWorkoutSet(d, workout.id, ex.id), 'Set added')
+                }
+              >
+                <Plus size={15} /> Add set
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() =>
+                  mutate(
+                    (d: AppData) => addWorkoutSet(d, workout.id, ex.id, 'warmup'),
+                    'Warm-up set added',
+                  )
+                }
+              >
+                <Plus size={15} /> Warm-up
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  const set = ex.actualSets.find(
+                    (item: WorkoutSet) => item.status === 'incomplete',
+                  );
+                  if (set) setState(ex.id, set, 'skipped');
+                }}
+              >
+                Skip set
+              </Button>
+              <Button size="sm" variant="ghost" onClick={markExerciseSkipped}>
+                Skip exercise
+              </Button>
+            </div>
+            {ex.loadMode === 'bodyweight' && ex.actualSets.length > 0 && (
+              <div className="stack" style={{ marginTop: 14 }}>
+                <div className="small muted">Load modes</div>
+                {ex.actualSets.map((set, index) => (
+                  <label key={set.id} className="row space-between small">
+                    {set.kind === 'warmup' ? 'Warm-up' : 'Set'} {index + 1}
+                    <select className="select" style={{ width: 'auto', maxWidth: '70%' }} aria-label={`Set ${index + 1} load mode`} value={set.loadMode || ex.loadMode} onChange={(event) => editSet(ex.id, set, { loadMode: event.target.value as WorkoutSet['loadMode'] })}>
+                      <option value="bodyweight">Added weight</option>
+                      <option value="assistance">Assistance</option>
+                    </select>
+                  </label>
+                ))}
+              </div>
+            )}
             <div className="form-field mobile-exercise-picker" style={{ marginTop: 14 }}>
               <label htmlFor="choose-today-exercise">Choose exercise</label>
               <select
@@ -2021,16 +1714,8 @@ function WorkoutScreen({
       ) : (
         <div className="empty-state">
           <h2>No exercises in this session</h2>
-          <Button onClick={finish}>Finish workout</Button>
         </div>
       )}
-      <div className="row space-between" style={{ marginTop: 23 }}>
-        <span className="muted small">Saved automatically on this device</span>
-        <Button variant="success" onClick={finish}>
-          <Check size={17} />
-          Finish workout
-        </Button>
-      </div>
     </div>
   );
 }
