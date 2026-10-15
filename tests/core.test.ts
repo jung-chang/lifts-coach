@@ -8,6 +8,7 @@ import {
   createPrescription,
   createRoutine,
   deleteRoutine,
+  discardWorkout,
   editWorkout,
   emptyData,
   finishWorkout,
@@ -32,6 +33,66 @@ const base = () => {
 };
 
 describe('core domain invariants', () => {
+  it('discards an active workout without adding history or changing routines', () => {
+    let data = base();
+    data = startWorkout(data, data.routines[0].id);
+    const historyId = data.workouts[0].id;
+    data = finishWorkout(data, historyId);
+    data = startWorkout(data, data.routines[0].id);
+    const active = data.workouts.find((workout) => workout.status === 'active')!;
+    const activeId = active.id;
+    data = setDone(
+      data,
+      activeId,
+      active.exercises[0].id,
+      active.exercises[0].actualSets[0].id,
+      true,
+    );
+    const routineSnapshot = JSON.stringify(data.routines);
+
+    const discarded = discardWorkout(data, activeId);
+
+    expect(discarded.workouts).toHaveLength(1);
+    expect(discarded.workouts[0].id).toBe(historyId);
+    expect(discarded.workouts[0].status).toBe('finished');
+    expect(discarded.routines).toBe(data.routines);
+    expect(discarded.routines).toHaveLength(1);
+    expect(discardWorkout(discarded, activeId)).toBe(discarded);
+
+    const finished = finishWorkout(data, activeId);
+    expect(discardWorkout(finished, activeId)).toBe(finished);
+    expect(finished.workouts.find((workout) => workout.id === activeId)?.status).toBe('finished');
+    expect(JSON.stringify(discarded.routines)).toBe(routineSnapshot);
+  });
+
+  it('rejects only pending proposals tied to a discarded workout', () => {
+    let data = base();
+    data = startWorkout(data, data.routines[0].id);
+    const activeId = data.workouts[0].id;
+    const proposal = (status: 'pending' | 'accepted', targetId = activeId): Proposal => ({
+      id: `${status}-${targetId}`,
+      scope: 'current_workout' as const,
+      targetId,
+      edits: [],
+      rationale: 'Synthetic proposal',
+      evidenceIds: [],
+      status,
+      createdAt: new Date().toISOString(),
+    });
+    data = {
+      ...data,
+      proposals: [proposal('pending'), proposal('accepted'), proposal('pending', 'other-workout')],
+    };
+
+    const discarded = discardWorkout(data, activeId);
+
+    expect(discarded.proposals.map((item) => item.status)).toEqual([
+      'rejected',
+      'accepted',
+      'pending',
+    ]);
+  });
+
   it('logs any set through a checkbox once and clears its owned timer when unchecked', () => {
     vi.useFakeTimers();
     try {

@@ -29,6 +29,7 @@ import {
   addWorkoutSet,
   updateSet,
   finishWorkout,
+  discardWorkout,
   applyProposal,
   rejectProposal,
   reorderExercises,
@@ -127,6 +128,7 @@ function App() {
   const [discardRequested, setDiscardRequested] = useState(false);
   const [routineDeleteId, setRoutineDeleteId] = useState<string | null>(null);
   const [deleteDataRequested, setDeleteDataRequested] = useState(false);
+  const [discardWorkoutRequested, setDiscardWorkoutRequested] = useState<string | null>(null);
   const [leaveEditorToWorkout, setLeaveEditorToWorkout] = useState(false);
   const editorBackCleanup = useRef<(() => void) | null>(null);
   const [notice, setNotice] = useState('');
@@ -520,6 +522,30 @@ function App() {
       }
     });
   };
+  const discardActiveWorkout = () => {
+    const targetId = discardWorkoutRequested;
+    if (!targetId) return;
+    let discarded = false;
+    void safeUpdate((d) => {
+      const next = discardWorkout(d, targetId);
+      discarded = next !== d;
+      return next;
+    }).then((ok) => {
+      if (!ok) return;
+      setDiscardWorkoutRequested(null);
+      if (!discarded) {
+        say('This workout is no longer active');
+        return;
+      }
+      setWorkoutId(null);
+      setCurrentEx(0);
+      setUndo(null);
+      setSummaryWorkout(null);
+      setContext((current) => (current.workoutId === targetId ? {} : current));
+      setTab('train');
+      say('Workout discarded');
+    });
+  };
   const saveProfile = () => {
     if (!data || !profileDraft) return;
     void safeUpdate((d) => ({
@@ -892,6 +918,7 @@ function App() {
                   timerNow={timerNow}
                   skipRest={skipRest}
                   finish={finish}
+                  requestDiscard={() => setDiscardWorkoutRequested(workout!.id)}
                   onCoach={() =>
                     openCoach(
                       { workoutId: workout!.id, exerciseId: activeExercise?.exerciseId },
@@ -1060,6 +1087,19 @@ function App() {
             }}
           >
             Delete all data
+          </Button>
+        </div>
+      </Sheet>
+      <Sheet
+        open={discardWorkoutRequested !== null}
+        onOpenChange={(open) => !open && setDiscardWorkoutRequested(null)}
+        title="Discard this workout?"
+        description="This removes the active session and all sets logged in it. Nothing from this workout will be saved to history."
+      >
+        <div className="sheet-actions">
+          <Button onClick={() => setDiscardWorkoutRequested(null)}>Keep workout</Button>
+          <Button variant="danger" onClick={discardActiveWorkout}>
+            Discard workout
           </Button>
         </div>
       </Sheet>
@@ -1456,6 +1496,7 @@ function WorkoutScreen({
   timerNow,
   skipRest,
   finish,
+  requestDiscard,
   onCoach,
   setUndo,
   undo,
@@ -1744,6 +1785,11 @@ function WorkoutScreen({
                 </Button>
               </div>
             </div>
+            <div style={{ marginTop: 14 }}>
+              <Button size="sm" variant="danger" onClick={requestDiscard}>
+                <Trash2 size={15} /> Discard workout
+              </Button>
+            </div>
             <div className="form-field" style={{ marginTop: 14 }}>
               <label htmlFor="replace-today">Replace current exercise for today</label>
               <select
@@ -1764,6 +1810,9 @@ function WorkoutScreen({
       ) : (
         <div className="empty-state">
           <h2>No exercises in this session</h2>
+          <Button variant="danger" onClick={requestDiscard}>
+            <Trash2 size={16} /> Discard workout
+          </Button>
         </div>
       )}
     </div>

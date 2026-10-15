@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { catalog } from '../shared/catalog';
 import {
@@ -99,6 +99,43 @@ describe('workout set table', () => {
     expect(screen.getAllByRole('button', { name: 'Finish workout' })).toHaveLength(1);
     expect(screen.queryByText('Complete set')).toBeNull();
     expect(screen.queryByRole('combobox', { name: /status/i })).toBeNull();
+  });
+
+  it('confirms before discarding an active workout and does not add it to history', async () => {
+    await beginWorkout();
+    fireEvent.click(screen.getByText('Options'));
+    fireEvent.click(screen.getByRole('button', { name: 'Discard workout' }));
+
+    const confirmation = screen.getByRole('dialog', { name: 'Discard this workout?' });
+    expect(confirmation.textContent).toContain('Nothing from this workout will be saved to history');
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Keep workout' }));
+    expect(fixture.data.workouts).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Discard workout' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Discard this workout?' })).getByRole('button', {
+        name: 'Discard workout',
+      }),
+    );
+    await waitFor(() => expect(fixture.data.workouts).toHaveLength(0));
+    expect(screen.queryByRole('dialog', { name: 'Workout saved' })).toBeNull();
+    expect(screen.getByText('Workout discarded')).toBeTruthy();
+  });
+
+  it('keeps the active workout and confirmation open when discard cannot be saved', async () => {
+    await beginWorkout();
+    fireEvent.click(screen.getByText('Options'));
+    fireEvent.click(screen.getByRole('button', { name: 'Discard workout' }));
+    fixture.update.mockRejectedValueOnce(new Error('Synthetic storage failure'));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Discard this workout?' })).getByRole('button', {
+        name: 'Discard workout',
+      }),
+    );
+
+    await screen.findByText('Synthetic storage failure');
+    expect(fixture.data.workouts).toHaveLength(1);
+    expect(screen.getByRole('dialog', { name: 'Discard this workout?' })).toBeTruthy();
   });
 
   it('captures each serialized pre-change snapshot so Undo restores only the latest tap', async () => {

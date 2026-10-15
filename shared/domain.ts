@@ -522,6 +522,22 @@ export function finishWorkout(
     ),
   };
 }
+
+export function discardWorkout(data: AppData, workoutId: string): AppData {
+  const workout = data.workouts.find((w) => w.id === workoutId && w.status === 'active');
+  if (!workout) return data;
+  return {
+    ...data,
+    workouts: data.workouts.filter((w) => w.id !== workoutId),
+    proposals: data.proposals.map((proposal) =>
+      proposal.scope === 'current_workout' &&
+      proposal.targetId === workoutId &&
+      proposal.status === 'pending'
+        ? { ...proposal, status: 'rejected' }
+        : proposal,
+    ),
+  };
+}
 export function proposalFingerprint(data: AppData, proposal: Proposal): string {
   if (proposal.preference)
     return JSON.stringify({
