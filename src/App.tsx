@@ -721,7 +721,7 @@ function App() {
                         <Plus size={19} /> Create routine
                       </Button>
                       <Button variant="ai" onClick={() => openCoach({}, false)}>
-                        <Sparkles size={17} /> Ask Coach to create one
+                        <Sparkles size={17} /> Ask Coach
                       </Button>
                     </div>
                   </div>
