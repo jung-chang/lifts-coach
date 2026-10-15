@@ -1009,8 +1009,8 @@ function App() {
       )}
       {notice && (
         <div className="toast" role="status">
-          <CheckCircle2 size={17} />
-          {notice}
+          <CheckCircle2 className="toast-icon" size={17} />
+          <span className="toast-message">{notice}</span>
           {undo && (
             <button onClick={undoLast}>
               <Undo2 size={14} style={{ verticalAlign: 'middle' }} /> Undo
