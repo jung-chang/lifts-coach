@@ -1993,12 +1993,25 @@ summary {
   flex: none;
   gap: 8px;
 }
-.mobile-exercise-picker {
+.mobile-workout-navigation {
   display: none;
 }
+.workout-completion-actions {
+  gap: 8px;
+}
+.workout-discard-button {
+  color: var(--red);
+}
+.workout-option-row {
+  min-height: 44px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
 @media (max-width: 700px) {
-  .mobile-exercise-picker {
-    display: grid;
+  .mobile-workout-navigation {
+    display: flex;
+    margin-top: 14px;
   }
   .workout-exercise-tabs {
     display: none;

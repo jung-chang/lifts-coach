@@ -432,23 +432,6 @@ function App() {
       if (ok && changed && before) setUndo({ data: before, label: 'Set updated' });
     });
   };
-  const setState = (exerciseId: string, set: WorkoutSet, status: WorkoutSet['status']) => {
-    if (!data || !workout) return;
-    let before: AppData | undefined;
-    void safeUpdate((d) => {
-      if (!d.workouts.some((item) => item.id === workout.id && item.status === 'active')) return d;
-      before = d;
-      return updateSet(d, workout.id, exerciseId, set.id, (s) => ({
-        ...s,
-        status,
-        completedAt: status === 'completed' ? new Date().toISOString() : undefined,
-      }));
-    }).then((ok) => {
-      if (!ok || !before) return;
-      setUndo({ data: before, label: status === 'skipped' ? 'Set skipped' : 'Set restored' });
-      say(status === 'skipped' ? 'Set skipped' : 'Set restored');
-    });
-  };
   const toggleSetDone = (
     targetWorkout: Workout,
     exerciseId: string,
@@ -908,7 +891,6 @@ function App() {
                   setCurrentEx={setCurrentEx}
                   activeExercise={activeExercise}
                   editSet={editSet}
-                  setState={setState}
                   toggleDone={(
                     exerciseId: string,
                     setId: string,
@@ -1491,7 +1473,6 @@ function WorkoutScreen({
   setCurrentEx,
   activeExercise,
   editSet,
-  setState,
   toggleDone,
   timerNow,
   skipRest,
@@ -1569,9 +1550,21 @@ function WorkoutScreen({
             <Sparkles size={16} />
             <span className="desktop-only">Coach</span>
           </Button>
-          <Button variant="primary" onClick={finish}>
-            Finish workout
-          </Button>
+          <div className="row workout-completion-actions">
+            <Button variant="primary" onClick={finish}>
+              Finish workout
+            </Button>
+            <Button
+              className="workout-discard-button"
+              variant="ghost"
+              size="icon"
+              aria-label="Discard workout"
+              title="Discard workout"
+              onClick={requestDiscard}
+            >
+              <Trash2 size={17} />
+            </Button>
+          </div>
         </div>
       </div>
       <div className="row space-between small muted">
@@ -1648,7 +1641,7 @@ function WorkoutScreen({
             onEdit={(set, patch) => editSet(ex.id, set, patch)}
             onDone={(setId, done, patch) => toggleDone(ex.id, setId, done, patch)}
           />
-          <div className="row space-between" style={{ marginTop: 17 }}>
+          <div className="row space-between mobile-workout-navigation">
             <Button
               variant="secondary"
               onClick={() => setCurrentEx(Math.max(0, currentEx - 1))}
@@ -1662,13 +1655,13 @@ function WorkoutScreen({
               onClick={() => setCurrentEx(Math.min(workout.exercises.length - 1, currentEx + 1))}
               disabled={currentEx >= workout.exercises.length - 1}
             >
-              Next exercise <ArrowRight size={16} />
+              Next <ArrowRight size={16} />
             </Button>
           </div>
           <details className="card card-pad workout-options" style={{ marginTop: 16 }}>
             <summary>
               <b>Options</b>
-              <span className="muted small">Set and exercise controls</span>
+              <span className="muted small">Adjust this session</span>
             </summary>
             <div className="row" style={{ flexWrap: 'wrap', marginTop: 14 }}>
               <Button
@@ -1678,7 +1671,7 @@ function WorkoutScreen({
                   mutate((d: AppData) => addWorkoutSet(d, workout.id, ex.id), 'Set added')
                 }
               >
-                <Plus size={15} /> Add set
+                <Plus size={15} /> Add working set
               </Button>
               <Button
                 size="sm"
@@ -1691,18 +1684,6 @@ function WorkoutScreen({
                 }
               >
                 <Plus size={15} /> Warm-up
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => {
-                  const set = ex.actualSets.find(
-                    (item: WorkoutSet) => item.status === 'incomplete',
-                  );
-                  if (set) setState(ex.id, set, 'skipped');
-                }}
-              >
-                Skip set
               </Button>
               <Button size="sm" variant="ghost" onClick={markExerciseSkipped}>
                 Skip exercise
@@ -1732,64 +1713,47 @@ function WorkoutScreen({
                 ))}
               </div>
             )}
-            <div className="form-field mobile-exercise-picker" style={{ marginTop: 14 }}>
-              <label htmlFor="choose-today-exercise">Choose exercise</label>
-              <select
-                id="choose-today-exercise"
-                className="select"
-                value={currentEx}
-                onChange={(event) => setCurrentEx(Number(event.target.value))}
-              >
-                {workout.exercises.map((exercise: WorkoutExercise, index: number) => (
-                  <option key={exercise.id} value={index}>
-                    {index + 1}. {exercise.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div style={{ marginTop: 14 }}>
-              <div className="row">
-                <Button
-                  size="icon"
-                  aria-label="Move exercise up"
-                  disabled={currentEx === 0}
-                  onClick={() => {
-                    const ids = workout.exercises.map((e: WorkoutExercise) => e.id);
-                    [ids[currentEx - 1], ids[currentEx]] = [ids[currentEx], ids[currentEx - 1]];
-                    mutate(
-                      (d: AppData) => reorderExercises(d, workout.id, ids),
-                      'Exercise order updated',
-                    );
-                    setCurrentEx(currentEx - 1);
-                    say('Exercise order updated');
-                  }}
-                >
-                  <ArrowUp size={16} />
-                </Button>
-                <Button
-                  size="icon"
-                  aria-label="Move exercise down"
-                  disabled={currentEx >= workout.exercises.length - 1}
-                  onClick={() => {
-                    const ids = workout.exercises.map((e: WorkoutExercise) => e.id);
-                    [ids[currentEx + 1], ids[currentEx]] = [ids[currentEx], ids[currentEx + 1]];
-                    mutate(
-                      (d: AppData) => reorderExercises(d, workout.id, ids),
-                      'Exercise order updated',
-                    );
-                    setCurrentEx(currentEx + 1);
-                    say('Exercise order updated');
-                  }}
-                >
-                  <ArrowDown size={16} />
-                </Button>
+            {workout.exercises.length > 1 && (
+              <div className="row space-between workout-option-row">
+                <span className="muted small">Move exercise</span>
+                <div className="row">
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label="Move exercise earlier"
+                    disabled={currentEx === 0}
+                    onClick={() => {
+                      const ids = workout.exercises.map((item: WorkoutExercise) => item.id);
+                      [ids[currentEx - 1], ids[currentEx]] = [ids[currentEx], ids[currentEx - 1]];
+                      mutate(
+                        (d: AppData) => reorderExercises(d, workout.id, ids),
+                        'Exercise order updated',
+                      );
+                      setCurrentEx(currentEx - 1);
+                    }}
+                  >
+                    <ArrowUp size={16} />
+                  </Button>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    aria-label="Move exercise later"
+                    disabled={currentEx >= workout.exercises.length - 1}
+                    onClick={() => {
+                      const ids = workout.exercises.map((item: WorkoutExercise) => item.id);
+                      [ids[currentEx + 1], ids[currentEx]] = [ids[currentEx], ids[currentEx + 1]];
+                      mutate(
+                        (d: AppData) => reorderExercises(d, workout.id, ids),
+                        'Exercise order updated',
+                      );
+                      setCurrentEx(currentEx + 1);
+                    }}
+                  >
+                    <ArrowDown size={16} />
+                  </Button>
+                </div>
               </div>
-            </div>
-            <div style={{ marginTop: 14 }}>
-              <Button size="sm" variant="danger" onClick={requestDiscard}>
-                <Trash2 size={15} /> Discard workout
-              </Button>
-            </div>
+            )}
             <div className="form-field" style={{ marginTop: 14 }}>
               <label htmlFor="replace-today">Replace current exercise for today</label>
               <select
@@ -1810,9 +1774,6 @@ function WorkoutScreen({
       ) : (
         <div className="empty-state">
           <h2>No exercises in this session</h2>
-          <Button variant="danger" onClick={requestDiscard}>
-            <Trash2 size={16} /> Discard workout
-          </Button>
         </div>
       )}
     </div>

@@ -97,13 +97,13 @@ describe('workout set table', () => {
     expect(screen.getAllByRole('row')).toHaveLength(4);
     expect(screen.getAllByRole('checkbox')).toHaveLength(3);
     expect(screen.getAllByRole('button', { name: 'Finish workout' })).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Discard workout' })).toBeTruthy();
     expect(screen.queryByText('Complete set')).toBeNull();
     expect(screen.queryByRole('combobox', { name: /status/i })).toBeNull();
   });
 
   it('confirms before discarding an active workout and does not add it to history', async () => {
     await beginWorkout();
-    fireEvent.click(screen.getByText('Options'));
     fireEvent.click(screen.getByRole('button', { name: 'Discard workout' }));
 
     const confirmation = screen.getByRole('dialog', { name: 'Discard this workout?' });
@@ -124,7 +124,6 @@ describe('workout set table', () => {
 
   it('keeps the active workout and confirmation open when discard cannot be saved', async () => {
     await beginWorkout();
-    fireEvent.click(screen.getByText('Options'));
     fireEvent.click(screen.getByRole('button', { name: 'Discard workout' }));
     fixture.update.mockRejectedValueOnce(new Error('Synthetic storage failure'));
     fireEvent.click(
@@ -136,6 +135,19 @@ describe('workout set table', () => {
     await screen.findByText('Synthetic storage failure');
     expect(fixture.data.workouts).toHaveLength(1);
     expect(screen.getByRole('dialog', { name: 'Discard this workout?' })).toBeTruthy();
+  });
+
+  it('keeps common session controls in Options without duplicating destructive actions', async () => {
+    await beginWorkout();
+    fireEvent.click(screen.getByText('Options'));
+    const options = screen.getByText('Options').closest('details')!;
+    expect(within(options).getByRole('button', { name: 'Add working set' })).toBeTruthy();
+    expect(within(options).getByRole('button', { name: 'Warm-up' })).toBeTruthy();
+    expect(within(options).getByRole('button', { name: 'Skip exercise' })).toBeTruthy();
+    expect(within(options).getByLabelText('Replace current exercise for today')).toBeTruthy();
+    expect(within(options).queryByRole('button', { name: /discard workout/i })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeTruthy();
   });
 
   it('captures each serialized pre-change snapshot so Undo restores only the latest tap', async () => {
