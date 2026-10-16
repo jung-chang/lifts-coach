@@ -53,6 +53,7 @@ import type {
 } from '../shared/types';
 import { useAppStore } from './lib/store';
 import { Button } from './components/ui/Button';
+import { ProgressCalendar } from './components/ProgressCalendar';
 import { Sheet as Dialog } from './components/ui/Sheet';
 import { ProposalCard } from './components/ProposalCard';
 import { Sheet } from './components/ui/Sheet';
@@ -1842,6 +1843,7 @@ function ProgressScreen({
           Ask Coach
         </Button>
       </div>
+      <ProgressCalendar workouts={finished} />
       {proposals?.length > 0 && (
         <section className="stack" style={{ marginBottom: 20 }}>
           <div>
