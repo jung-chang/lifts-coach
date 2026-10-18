@@ -1,4 +1,23 @@
 {
-  "id": "/", "name": "Lifts Coach", "short_name": "Lifts Coach", "description": "Your quiet personal workout tracker", "start_url": "/", "scope": "/", "display": "standalone", "background_color": "#F5F5F2", "theme_color": "#F5F5F2",
-  "icons": [{ "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" }, { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }]
+  "id": "/",
+  "name": "Lifts Coach",
+  "short_name": "Lifts Coach",
+  "description": "A quiet, local-first personal training log.",
+  "lang": "en",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#F5F5F2",
+  "theme_color": "#F5F5F2",
+  "prefer_related_applications": false,
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    {
+      "src": "/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
 }

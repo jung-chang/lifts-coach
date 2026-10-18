@@ -95,6 +95,10 @@ Settings exports a complete schema-versioned JSON backup of routines, custom exe
 
 ## PWA and privacy
 
+See [production readiness](docs/production-readiness.md) for the matching favicon,
+Apple/Android install assets, update behavior, and the release gates for the
+owner's expanded plan to support other users on both phone platforms.
+
 The manifest includes standalone display and raster install icons. Static assets are cached by the service worker; API responses are excluded. On iPhone, use Safari **Share → Add to Home Screen**. On Android, use the browser's install action. Logging can recover after reload and works without a model or network connection. Rest timers use expiry timestamps and recover after suspension; they are in-app timers, not native background notifications.
 
 Personal data is stored locally and in your Cloudflare account, partitioned by the verified Access identity. The Data & privacy screen exports a backup and can permanently delete that identity's local and cloud copies after confirmation. Coach requests send relevant routines, a bounded recent history, profile and conversation to the chosen model provider. The research corpus consists of manually curated, cited Markdown summaries bundled with the Worker. No live literature search or automatic ingestion runs. Review the corpus's [maintenance notes](evidence/README.md) before extending it.

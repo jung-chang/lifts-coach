@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# Local generated artifacts and unrelated checkouts are not public app source.
+/output/
 .wrangler/
 .dev.vars*
 !.dev.vars.example
