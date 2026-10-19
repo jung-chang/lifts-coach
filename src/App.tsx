@@ -2149,6 +2149,12 @@ function CoachScreen({
   openRoutine,
 }: any) {
   const scroll = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    if (!composer.current) return;
+    composer.current.style.height = 'auto';
+    composer.current.style.height = `${Math.max(48, Math.min(140, composer.current.scrollHeight))}px`;
+  }, [chatText]);
   useEffect(() => {
     scroll.current?.scrollTo({ top: scroll.current.scrollHeight, behavior: 'smooth' });
   }, [data.messages.length, busy]);
@@ -2291,11 +2297,9 @@ function CoachScreen({
           {error}
         </div>
       )}
-      <div
-        className="card card-pad coach-composer"
-        style={{ padding: 10, display: 'flex', gap: 8, alignItems: 'end' }}
-      >
+      <div className="card coach-composer">
         <textarea
+          ref={composer}
           className="textarea"
           aria-label="Message Coach"
           placeholder={
@@ -2304,7 +2308,7 @@ function CoachScreen({
               : 'Coach is waiting for synced training context'
           }
           disabled={syncStatus !== 'synced'}
-          style={{ border: 0, minHeight: 48, maxHeight: 140, resize: 'vertical' }}
+          rows={1}
           value={chatText}
           onChange={(e) => setChatText(e.target.value)}
           onKeyDown={(e) => {
