@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 const origin = process.env.TEST_WORKER_ORIGIN || 'http://localhost:8788';
 assert(['localhost', '127.0.0.1'].includes(new URL(origin).hostname), 'Local Worker only.');
+const session = await (await fetch(`${origin}/api/session`)).json();
 const get = async () => (await fetch(`${origin}/api/state`)).json();
 const put = (data, revision) =>
   fetch(`${origin}/api/state`, {
     method: 'PUT',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'X-Lifts-Account': session.accountId },
     body: JSON.stringify({
       data,
+      accountId: session.accountId,
       baseRevision: revision,
       deviceId: 'large-integration',
       operationId: crypto.randomUUID(),

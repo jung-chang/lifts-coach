@@ -20,9 +20,15 @@ The owner's newest workout instruction replaces the focused-set interface with a
 
 The four columns fit 320px without horizontal panning, with readable decimal loads and 44px interaction areas. Completion keeps its restrained green cue; logging and rest remain deterministic. Exercise navigation stays available, while warm-ups, additional sets, skip and optional load modes live under Options. Mobile navigation has three tabs; desktop navigation remains integrated with the shell. Preserve the mini-player only while an active workout is viewed elsewhere.
 
-Progress puts exercise strength and consistency first. Coach looks like a focused conversation, with quiet contextual actions and inspectable approvals. Routine editing and proposals share the same visual controls.
+The owner's latest Progress refinement puts the workout calendar and weekly volume at the top level. Volume shows completed working sets in Monday–Sunday weeks, excluding warm-ups and skipped or incomplete sets. Exercise stats (including progression suggestions) and full workout history open through secondary clickable rows, with a clear return to Progress. History retains corrections and repeat workouts. Coach looks like a focused conversation, with quiet contextual actions and inspectable approvals. Routine editing and proposals share the same visual controls.
 
 ## Routine editing and contextual controls
+
+The owner approved the profile/community layout study for implementation. Primary navigation is **Train · Progress · Community**, with a desktop sidebar and three phone tabs. Coach stays available in the header and contextual actions; the avatar opens the account's single profile. Settings and private coaching preferences remain secondary profile actions.
+
+Community uses a quiet divider-based feed. Avatar/name opens the person's profile; the workout summary area opens its full read-only summary. Cards have no overflow menu or link-out arrow. Every exercise's completed set table is expanded on entry, with no accordion. Own history uses the same expanded summary with explicit correction and repeat actions. Profiles compare completed working-set volume and matched canonical lifts without rankings.
+
+Sharing starts private. The profile shows the audience and separate choices for all-history summaries and future finished workouts. Workout Options and completed summaries expose per-workout visibility. Notes, email and Coach data never appear in shared workout/profile responses.
 
 The owner's later usability request makes routine creation and editing a full-page Train sub-screen at every width. Its dedicated Back/title/Save header replaces the global navigation while editing. Manual and Coach routines use the same staged draft; exercise, custom-exercise and increment changes persist together only on Save. Leaving a changed draft requires a discard decision, including browser Back. Opening an untouched new draft does not prompt. An active workout stays intact and remains reachable through its mini-player.
 

@@ -75,6 +75,38 @@ summary:focus-visible {
 .progress-calendar {
   margin-bottom: 20px;
 }
+.progress-overview {
+  align-items: start;
+}
+.progress-overview .progress-calendar {
+  margin-bottom: 0;
+}
+.progress-links {
+  margin-top: 20px;
+}
+.progress-links > button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  min-height: 72px;
+  padding: 12px 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.progress-links > button + button {
+  border-top: 1px solid var(--border);
+}
+.progress-links > button > span {
+  display: grid;
+  gap: 4px;
+}
+.progress-links > button > svg {
+  flex-shrink: 0;
+}
 .progress-calendar-header {
   gap: 12px;
   flex-wrap: wrap;

@@ -3,12 +3,13 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ProgressCalendar } from '../src/components/ProgressCalendar';
 
-const workout = (id: string, name: string, startedAt: string) => ({
-  id,
-  name,
-  startedAt,
-  status: 'finished',
-}) as any;
+const workout = (id: string, name: string, startedAt: string) =>
+  ({
+    id,
+    name,
+    startedAt,
+    status: 'finished',
+  }) as any;
 
 afterEach(cleanup);
 

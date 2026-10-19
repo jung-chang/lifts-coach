@@ -54,6 +54,9 @@ export interface Workout {
   feeling?: string;
   notes?: string;
   updatedAt: string;
+  trainingDate?: string;
+  trainingTimezone?: string;
+  communityVisibility?: { visibility: 'private' | 'community'; policyRevision: number };
 }
 export type EditScope = 'current_workout' | 'next_workout' | 'routine';
 export type TrainingEdit =
@@ -136,6 +139,8 @@ export interface AppData {
   appliedProposalIds: string[];
 }
 export interface SyncRequest {
+  accountId?: string;
+  restore?: boolean;
   operationId: string;
   deviceId: string;
   baseRevision: number;

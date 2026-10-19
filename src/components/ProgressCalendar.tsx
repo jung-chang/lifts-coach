@@ -11,19 +11,23 @@ function workoutDateKey(value: string) {
   return Number.isNaN(date.getTime()) ? '' : dateKey(date);
 }
 
-export function ProgressCalendar({ workouts }: { workouts: Workout[] }) {
+export function ProgressCalendar({
+  workouts,
+  onWorkout,
+}: {
+  workouts: Workout[];
+  onWorkout?: (id: string) => void;
+}) {
   const byDay = useMemo(() => {
     const grouped = new Map<string, Workout[]>();
     for (const workout of workouts) {
       if (workout.status !== 'finished') continue;
-      const key = workoutDateKey(workout.startedAt);
+      const key = workout.trainingDate || workoutDateKey(workout.startedAt);
       if (!key) continue;
       grouped.set(key, [...(grouped.get(key) || []), workout]);
     }
     for (const sessions of grouped.values()) {
-      sessions.sort(
-        (a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime(),
-      );
+      sessions.sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
     }
     return grouped;
   }, [workouts]);
@@ -134,7 +138,13 @@ export function ProgressCalendar({ workouts }: { workouts: Workout[] }) {
               {selectedWorkouts.map((workout) => (
                 <div className="progress-calendar-session" key={workout.id}>
                   <span className="progress-calendar-marker" aria-hidden="true" />
-                  <span>{workout.name}</span>
+                  {onWorkout ? (
+                    <button className="calendar-workout-link" onClick={() => onWorkout(workout.id)}>
+                      {workout.name}
+                    </button>
+                  ) : (
+                    <span>{workout.name}</span>
+                  )}
                 </div>
               ))}
             </div>

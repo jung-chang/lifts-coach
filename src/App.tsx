@@ -21,6 +21,8 @@ import {
   Undo2,
   X,
   Trash2,
+  Users,
+  UserRound,
 } from 'lucide-react';
 import {
   startWorkout,
@@ -62,6 +64,12 @@ import { SetTable } from './components/SetTable';
 import { FirstRunOnboarding } from './components/FirstRunOnboarding';
 import { formatLoadValue } from './components/LoadSemantics';
 import { SyncDetails } from './components/SyncDetails';
+import { CommunityScreen, OwnProfileScreen } from './components/CommunityScreen';
+import { WorkoutSummary } from './components/WorkoutSummary';
+import { WorkoutVisibilityControl } from './components/WorkoutVisibilityControl';
+import type { AccountSession } from '../shared/community';
+import { mondayOfDate, recentMondayDates, trainingDateAt } from '../shared/trainingDates';
+import './shell.css';
 import { addSampleRoutine } from './lib/sampleRoutine';
 import {
   applyInspectedRoutineProposal,
@@ -72,7 +80,7 @@ import {
 } from './lib/routineDraft';
 import { listenForRoutineEditorBack, pushRoutineEditorHistory } from './lib/editorNavigation';
 
-type Tab = 'train' | 'progress' | 'coach' | 'settings';
+type Tab = 'train' | 'progress' | 'community' | 'profile' | 'coach' | 'settings' | 'workout-detail';
 const allExercises = (data: AppData) => [...catalog, ...data.exercises];
 const dateLabel = (value: string) =>
   new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
@@ -120,7 +128,16 @@ const applyDoneValues = (
 function App() {
   const store = useAppStore();
   const data = store.data;
+  const session = store.session ?? null;
   const [tab, setTab] = useState<Tab>('train');
+  const [progressView, setProgressView] = useState<'overview' | 'stats' | 'history'>('overview');
+  const [ownWorkoutId, setOwnWorkoutId] = useState<string | null>(null);
+  const [ownWorkoutReturn, setOwnWorkoutReturn] = useState<Tab>('progress');
+  const [legacyClaimRequested, setLegacyClaimRequested] = useState(false);
+  const [legacyCounts, setLegacyCounts] = useState<{ workouts: number; routines: number } | null>(
+    null,
+  );
+  const previousAccount = useRef<string | null>(null);
   const [modal, setModal] = useState('');
   const [editorDraft, setEditorDraft] = useState<RoutineDraft | null>(null);
   const [editorVisible, setEditorVisible] = useState(false);
@@ -170,10 +187,37 @@ function App() {
     region: 'upper',
   });
   const active = data?.workouts.find((w: Workout) => w.status === 'active');
+  const currentAccount = useRef(session?.accountId ?? null);
+  currentAccount.current = session?.accountId ?? null;
+  const coachRequest = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const accountId = session?.accountId ?? null;
+    if (previousAccount.current === accountId) return;
+    previousAccount.current = accountId;
+    coachRequest.current?.abort();
+    setChatBusy(false);
+    setModal('');
+    setEditorDraft(null);
+    setEditorVisible(false);
+    setWorkoutId(null);
+    setOwnWorkoutId(null);
+    setCorrection(null);
+    setUndo(null);
+    setContext({});
+    setChatText('');
+    setChatError('');
+    setSummaryWorkout(null);
+    setTab('train');
+  }, [session?.accountId]);
   const workout = data?.workouts.find((w: Workout) => w.id === (workoutId || active?.id));
   useEffect(() => {
     if (editorVisible) window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   }, [editorVisible]);
+  const lastTab = useRef(tab);
+  useEffect(() => {
+    if (lastTab.current !== tab) window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
+    lastTab.current = tab;
+  }, [tab]);
   useEffect(() => {
     if (active && !workoutId) {
       setWorkoutId(active.id);
@@ -185,11 +229,22 @@ function App() {
     return () => clearInterval(t);
   }, []);
   useEffect(() => {
-    fetch('/api/providers')
+    const controller = new AbortController();
+    setAvailableProviders([]);
+    fetch('/api/providers', {
+      signal: controller.signal,
+      cache: 'no-store',
+      headers: session ? { 'X-Lifts-Account': session.accountId } : {},
+    })
       .then((r) => (r.ok ? r.json() : []))
-      .then((v) => (Array.isArray(v) ? setAvailableProviders(v) : undefined))
-      .catch(() => setAvailableProviders([]));
-  }, []);
+      .then((v) =>
+        !controller.signal.aborted && Array.isArray(v) ? setAvailableProviders(v) : undefined,
+      )
+      .catch(() => {
+        if (!controller.signal.aborted) setAvailableProviders([]);
+      });
+    return () => controller.abort();
+  }, [session?.accountId, session?.coachEnabled]);
   useEffect(() => {
     if (notice) {
       const t = setTimeout(() => setNotice(''), 4500);
@@ -223,9 +278,44 @@ function App() {
   const activeExercise =
     workout?.exercises[Math.min(currentEx, Math.max(0, (workout?.exercises.length || 1) - 1))];
   const exerciseById = (eid: string) => data && allExercises(data).find((e) => e.id === eid);
+  const setInitialAudience = (next: AppData) => ({
+    ...next,
+    workouts: next.workouts.map((w) =>
+      w.status === 'active'
+        ? {
+            ...w,
+            trainingTimezone: session?.profile.trainingTimezone ?? w.trainingTimezone,
+            trainingDate: trainingDateAt(
+              w.startedAt,
+              session?.profile.trainingTimezone ?? w.trainingTimezone ?? 'UTC',
+            ),
+            communityVisibility: {
+              visibility: session?.sharing.autoPublishWorkouts
+                ? ('community' as const)
+                : ('private' as const),
+              policyRevision: session?.sharing.policyRevision ?? 0,
+            },
+          }
+        : w,
+    ),
+  });
+  const openOwnWorkout = (id: string) => {
+    setOwnWorkoutId(id);
+    setOwnWorkoutReturn(tab);
+    setTab('workout-detail');
+    window.scrollTo({ top: 0 });
+  };
+  const onSessionChange = (_session: AccountSession) => {
+    void store.refreshSession?.();
+  };
+  const openAccountSettings = () => {
+    setProfileDraft(structuredClone(data?.settings));
+    setSettingsTab('general');
+    setModal('settings');
+  };
   const start = (routineId: string) => {
     try {
-      mutate((d) => startWorkout(d, routineId));
+      mutate((d) => setInitialAudience(startWorkout(d, routineId)));
       setWorkoutId(null);
       setTab('train');
       setNotice('');
@@ -235,7 +325,7 @@ function App() {
   };
   const repeat = (id: string) => {
     try {
-      mutate((d) => repeatWorkout(d, id));
+      mutate((d) => setInitialAudience(repeatWorkout(d, id)));
       setWorkoutId(null);
       setTab('train');
       setNotice('');
@@ -351,6 +441,12 @@ function App() {
   };
   const submitChat = async () => {
     if (!data || !chatText.trim() || chatBusy) return;
+    if (session && !session.coachEnabled) {
+      setChatError(
+        'Coach is not enabled for this account. Your training and community remain available.',
+      );
+      return;
+    }
     if (status !== 'synced') {
       setChatError(
         status === 'conflict'
@@ -364,6 +460,10 @@ function App() {
       return;
     }
     const message = chatText.trim();
+    const accountId = currentAccount.current;
+    const controller = new AbortController();
+    coachRequest.current = controller;
+    const stillCurrent = () => !controller.signal.aborted && accountId === currentAccount.current;
     setChatText('');
     setChatBusy(true);
     setChatError('');
@@ -373,11 +473,16 @@ function App() {
       text: message,
       createdAt: new Date().toISOString(),
     };
-    await store.update((d) => ({ ...d, messages: [...d.messages, user] }));
     try {
+      await store.update((d) => ({ ...d, messages: [...d.messages, user] }));
+      if (!stillCurrent()) return;
       const response = await fetch('/api/coach/chat', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        signal: controller.signal,
+        headers: {
+          'content-type': 'application/json',
+          ...(accountId ? { 'X-Lifts-Account': accountId } : {}),
+        },
         body: JSON.stringify({
           message,
           context,
@@ -400,6 +505,7 @@ function App() {
         proposals?: Proposal[];
         evidence?: any[];
       };
+      if (!stillCurrent()) return;
       const reply = {
         id: id('msg'),
         role: 'assistant' as const,
@@ -414,9 +520,9 @@ function App() {
         proposals: [...d.proposals, ...(result.proposals || [])],
       }));
     } catch (e) {
-      setChatError((e as Error).message);
+      if (stillCurrent()) setChatError((e as Error).message);
     } finally {
-      setChatBusy(false);
+      if (stillCurrent()) setChatBusy(false);
     }
   };
   const editSet = (exerciseId: string, set: WorkoutSet, patch: Partial<WorkoutSet>) => {
@@ -678,37 +784,54 @@ function App() {
     <div
       className={`app-shell${showMini ? ' has-active-session' : ''}${editorVisible ? ' is-routine-editor' : ''}`}
     >
-      <header className="topbar">
-        <div className="brand">Lifts Coach</div>
-        <div className="top-actions">
-          <span className="pill desktop-only">
-            <span className="status-dot" />
-            {status === 'local'
-              ? 'Saved on device'
-              : status === 'syncing'
-                ? 'Syncing'
-                : status === 'conflict'
-                  ? 'Sync conflict'
-                  : status === 'offline'
-                    ? 'Offline'
-                    : status === 'error'
-                      ? 'Sync issue'
-                      : 'Synced'}
-          </span>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Settings"
-            onClick={() => {
-              setProfileDraft(structuredClone(data.settings));
-              setSettingsTab('general');
-              setModal('settings');
-            }}
+      {!editorVisible && (
+        <header className="topbar">
+          <button
+            className="brand brand-home"
+            onClick={() => setTab('train')}
+            aria-label="Lifts Coach home"
           >
-            <SettingsIcon size={19} />
-          </Button>
-        </div>
-      </header>
+            <span className="brand-mark">
+              <Dumbbell size={21} />
+            </span>
+            Lifts Coach
+          </button>
+          <div className="top-actions">
+            <span className="pill desktop-only">
+              <span className="status-dot" />
+              {status === 'local'
+                ? 'Saved on device'
+                : status === 'syncing'
+                  ? 'Syncing'
+                  : status === 'conflict'
+                    ? 'Sync conflict'
+                    : status === 'offline'
+                      ? 'Offline'
+                      : status === 'error'
+                        ? 'Sync issue'
+                        : 'Synced'}
+            </span>
+            <Button variant="ghost" size="icon" aria-label="Ask Coach" onClick={() => openCoach()}>
+              <Sparkles size={19} />
+            </Button>
+            <Button
+              className="profile-avatar-button"
+              variant="ghost"
+              size="icon"
+              aria-label="Your profile"
+              onClick={() => setTab('profile')}
+            >
+              {session?.profile.displayName?.trim() ? (
+                <span aria-hidden="true">
+                  {session.profile.displayName.trim().slice(0, 1).toUpperCase()}
+                </span>
+              ) : (
+                <UserRound size={19} />
+              )}
+            </Button>
+          </div>
+        </header>
+      )}
       {editorVisible && editorDraft ? (
         <RoutineEditor
           data={data}
@@ -744,6 +867,15 @@ function App() {
                   />
                 ) : (
                   <>
+                    <div className="page-heading train-page-heading">
+                      <div>
+                        <div className="eyebrow">Your training. Your pace.</div>
+                        <h1>Ready when you are.</h1>
+                        <p className="muted small">
+                          Your next routine picks up where you left off.
+                        </p>
+                      </div>
+                    </div>
                     {(() => {
                       const next =
                         data.routines[data.settings.rotationIndex % data.routines.length] ||
@@ -854,8 +986,15 @@ function App() {
                     <section className="train-history">
                       <div className="section-title">
                         <h2>Recent workouts</h2>
-                        <Button size="sm" variant="ghost" onClick={() => setTab('progress')}>
-                          View history <ArrowRight size={15} />
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setProgressView('history');
+                            setTab('progress');
+                          }}
+                        >
+                          View history
                         </Button>
                       </div>
                       {data.workouts.filter((w) => w.status === 'finished').length === 0 ? (
@@ -868,13 +1007,16 @@ function App() {
                           .slice(0, 3)
                           .map((w) => (
                             <div className="history-item" key={w.id}>
-                              <div className="grow">
+                              <button
+                                className="grow history-workout-link"
+                                onClick={() => openOwnWorkout(w.id)}
+                              >
                                 <b>{w.name}</b>
                                 <div className="muted small">
                                   {dateLabel(w.startedAt)} · {duration(w.startedAt, w.completedAt)}{' '}
                                   min · {completedSets(w)} sets
                                 </div>
-                              </div>
+                              </button>
                               <Button size="sm" variant="secondary" onClick={() => repeat(w.id)}>
                                 <RotateCcw size={15} /> Repeat
                               </Button>
@@ -912,6 +1054,25 @@ function App() {
                   undo={undo}
                   say={say}
                   mutate={mutate}
+                  saveVisibility={(visibility: 'private' | 'community') =>
+                    safeUpdate((d) => ({
+                      ...d,
+                      workouts: d.workouts.map((w) =>
+                        w.id === workout!.id && w.status === 'active'
+                          ? {
+                              ...w,
+                              communityVisibility: {
+                                visibility,
+                                policyRevision: session?.sharing.policyRevision ?? 0,
+                              },
+                              updatedAt: new Date().toISOString(),
+                            }
+                          : w,
+                      ),
+                    }))
+                  }
+                  session={session}
+                  syncStatus={status}
                 />
               )}
             </main>
@@ -919,6 +1080,14 @@ function App() {
           {tab === 'progress' && (
             <ProgressScreen
               data={data}
+              timezone={
+                session?.profile.trainingTimezone ??
+                Intl.DateTimeFormat().resolvedOptions().timeZone ??
+                'UTC'
+              }
+              view={progressView}
+              setView={setProgressView}
+              onWorkout={openOwnWorkout}
               onCoach={() => openCoach()}
               onRepeat={repeat}
               onCorrection={(w: Workout, e: WorkoutExercise) =>
@@ -950,6 +1119,74 @@ function App() {
               openRoutine={openRoutine}
             />
           )}
+          {tab === 'community' && (
+            <CommunityScreen
+              key={session?.accountId ?? 'local'}
+              session={session}
+              unit={data.settings.unit}
+              onSessionChange={onSessionChange}
+              onSettings={openAccountSettings}
+              onCoach={() => openCoach()}
+            />
+          )}
+          {tab === 'profile' && (
+            <OwnProfileScreen
+              onWorkout={openOwnWorkout}
+              key={session?.accountId ?? 'local'}
+              session={session}
+              unit={data.settings.unit}
+              data={data}
+              onSessionChange={onSessionChange}
+              onSettings={openAccountSettings}
+              onBack={() => setTab('train')}
+              onSignOut={() => {
+                void store
+                  .signOut?.()
+                  .then(() => {
+                    setTab('train');
+                    window.location.assign('/cdn-cgi/access/logout');
+                  })
+                  .catch((e: Error) => say(e.message));
+              }}
+              legacyAvailable={store.legacyAvailable}
+              onClaimLegacy={() => {
+                void store
+                  .exportLegacyData?.()
+                  .then((text) => {
+                    const legacy = text ? (JSON.parse(text) as AppData) : null;
+                    setLegacyCounts(
+                      legacy
+                        ? { workouts: legacy.workouts.length, routines: legacy.routines.length }
+                        : null,
+                    );
+                    setLegacyClaimRequested(true);
+                  })
+                  .catch((e: Error) => say(e.message));
+              }}
+            />
+          )}
+          {tab === 'workout-detail' &&
+            (() => {
+              const historical = data.workouts.find(
+                (w) => w.id === ownWorkoutId && w.status === 'finished',
+              );
+              return historical ? (
+                <WorkoutSummary
+                  workout={historical}
+                  unit={data.settings.unit}
+                  session={session}
+                  synced={status === 'synced'}
+                  onBack={() => setTab(ownWorkoutReturn)}
+                  onRepeat={() => repeat(historical.id)}
+                  onCorrection={(e) => setCorrection({ workout: historical, exercise: e })}
+                />
+              ) : (
+                <main className="page">
+                  <Button onClick={() => setTab('progress')}>Back to Progress</Button>
+                  <p className="muted">This workout is no longer available.</p>
+                </main>
+              );
+            })()}
           {tab === 'settings' && (
             <SettingsScreen
               data={data}
@@ -995,11 +1232,18 @@ function App() {
       )}
       {!editorVisible && (
         <nav className="bottom-nav" aria-label="Main navigation">
+          <div className="sidebar-brand">
+            <span className="brand-mark">
+              <Dumbbell size={21} />
+            </span>
+            Lifts Coach
+          </div>
+          <div className="sidebar-label eyebrow">Your space</div>
           {(
             [
               ['train', 'Train', Dumbbell],
               ['progress', 'Progress', BarChart3],
-              ['coach', 'Coach', Sparkles],
+              ['community', 'Community', Users],
             ] as const
           ).map(([key, label, Icon]) => (
             <button
@@ -1007,6 +1251,7 @@ function App() {
               onClick={() => {
                 setTab(key);
                 if (key === 'train' && editorDraft) setEditorVisible(true);
+                if (key === 'progress') setProgressView('overview');
               }}
               className={`nav-button ${tab === key ? 'active' : ''}`}
               aria-current={tab === key ? 'page' : undefined}
@@ -1015,8 +1260,71 @@ function App() {
               <span>{label}</span>
             </button>
           ))}
+          <div className="sidebar-account">
+            <button
+              className={`sidebar-coach${tab === 'coach' ? ' active' : ''}`}
+              onClick={() => openCoach()}
+            >
+              <Sparkles size={18} /> Ask Coach
+            </button>
+            <button className="sidebar-profile" onClick={() => setTab('profile')}>
+              <UserRound size={21} />
+              <span>
+                {session?.profile.displayName || 'Your profile'}
+                <small>Profile & settings</small>
+              </span>
+            </button>
+          </div>
         </nav>
       )}
+      <Sheet
+        open={legacyClaimRequested}
+        onOpenChange={setLegacyClaimRequested}
+        title="Move device data to your account?"
+        description="This browser has older training data without an account owner. Nothing is uploaded until you choose to claim it. An independent legacy copy remains available for export."
+      >
+        <p>
+          {legacyCounts
+            ? `${legacyCounts.routines} routines and ${legacyCounts.workouts} workouts are on this device.`
+            : 'Review and export the device data before claiming it.'}
+        </p>
+        <p className="muted small">
+          The signed-in account must be empty. Restored workouts stay private until you explicitly
+          review sharing.
+        </p>
+        <div className="sheet-actions">
+          <Button onClick={() => setLegacyClaimRequested(false)}>Keep separate</Button>
+          <Button
+            onClick={() => {
+              void store.exportLegacyData?.().then((text) => {
+                if (!text) return;
+                const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }));
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'lifts-coach-device-backup.json';
+                a.click();
+                URL.revokeObjectURL(url);
+              });
+            }}
+          >
+            Export device backup
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              void store
+                .claimLegacyData?.()
+                .then(() => {
+                  setLegacyClaimRequested(false);
+                  say('Device data claimed for your account');
+                })
+                .catch((e: Error) => say(e.message));
+            }}
+          >
+            Claim device data
+          </Button>
+        </div>
+      </Sheet>
       {notice && (
         <div className="toast" role="status">
           <CheckCircle2 className="toast-icon" size={17} />
@@ -1484,6 +1792,9 @@ function WorkoutScreen({
   undo,
   say,
   mutate,
+  saveVisibility,
+  session,
+  syncStatus,
 }: any) {
   const unit = data.settings.unit;
   const ex = activeExercise as WorkoutExercise | undefined;
@@ -1664,6 +1975,12 @@ function WorkoutScreen({
               <b>Options</b>
               <span className="muted small">Adjust this session</span>
             </summary>
+            <WorkoutVisibilityControl
+              session={session}
+              workout={workout}
+              synced={syncStatus === 'synced'}
+              onLocalChange={saveVisibility}
+            />
             <div className="row" style={{ flexWrap: 'wrap', marginTop: 14 }}>
               <Button
                 size="sm"
@@ -1783,6 +2100,10 @@ function WorkoutScreen({
 
 function ProgressScreen({
   data,
+  timezone,
+  view,
+  setView,
+  onWorkout,
   onCoach,
   onRepeat,
   onCorrection,
@@ -1793,6 +2114,10 @@ function ProgressScreen({
   reject,
 }: any) {
   const [exerciseId, setExerciseId] = useState('');
+  const openView = (next: 'overview' | 'stats' | 'history') => {
+    setView(next);
+    window.scrollTo({ top: 0 });
+  };
   const finished = (data.workouts as Workout[])
     .filter((w) => w.status === 'finished')
     .slice()
@@ -1819,201 +2144,248 @@ function ProgressScreen({
   const selectedId = byExercise.has(exerciseId) ? exerciseId : entries[0]?.[0];
   const loadMode = allExercises(data).find((x) => x.id === selectedId)?.loadMode;
   const repsOnly = loadMode === 'assistance' || loadMode === 'bodyweight';
-  const weeks = Array.from({ length: 8 }, (_, i) => {
-    const start = new Date();
-    start.setDate(start.getDate() - (7 - i) * 7);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(start);
-    end.setDate(end.getDate() + 7);
-    const count = finished.filter(
-      (w: Workout) => new Date(w.startedAt) >= start && new Date(w.startedAt) < end,
-    ).length;
-    return { label: `${start.getMonth() + 1}/${start.getDate()}`, count };
+  const weeks = recentMondayDates(timezone).map((start) => {
+    const count = finished
+      .filter(
+        (w: Workout) =>
+          mondayOfDate(
+            w.trainingDate ?? trainingDateAt(w.startedAt, w.trainingTimezone ?? timezone),
+          ) === start,
+      )
+      .reduce(
+        (total, workout) =>
+          total +
+          workout.exercises.reduce(
+            (sets, exercise) =>
+              sets +
+              exercise.actualSets.filter(
+                (set) => set.status === 'completed' && set.kind === 'working',
+              ).length,
+            0,
+          ),
+        0,
+      );
+    return { label: `${Number(start.slice(5, 7))}/${Number(start.slice(8, 10))}`, count };
   });
   const max = Math.max(1, ...weeks.map((x) => x.count));
   return (
     <main className="page">
+      {view !== 'overview' && (
+        <Button variant="ghost" onClick={() => openView('overview')}>
+          <ArrowLeft size={16} /> Back to Progress
+        </Button>
+      )}
       <div className="page-heading">
         <div>
           <div className="eyebrow">Your training, over time</div>
-          <h1>Progress</h1>
+          <h1>
+            {view === 'overview'
+              ? 'Progress'
+              : view === 'stats'
+                ? 'Exercise stats'
+                : 'Workout history'}
+          </h1>
         </div>
         <Button variant="ai" onClick={onCoach}>
           <Sparkles size={16} />
           Ask Coach
         </Button>
       </div>
-      <ProgressCalendar workouts={finished} />
-      {proposals?.length > 0 && (
-        <section className="stack" style={{ marginBottom: 20 }}>
-          <div>
-            <div className="eyebrow">Ready to review</div>
-            <h2 style={{ marginTop: 4 }}>Progression suggestions</h2>
-          </div>
-          {proposals.map((p: Proposal) => (
-            <ProposalCard
-              key={p.id}
-              proposal={p}
-              data={data}
-              selected={
-                selection[p.id] ??
-                (p.edits.length ? p.edits.map((_: unknown, i: number) => i) : [0])
-              }
-              setSelected={(v: number[]) => setSelection((s: any) => ({ ...s, [p.id]: v }))}
-              apply={() => apply(p)}
-              reject={() => reject(p)}
-            />
-          ))}
-        </section>
-      )}
-      <div className="grid two-col">
-        <section className="card card-pad">
-          <div className="row space-between">
+      <div className={view === 'overview' ? 'grid two-col progress-overview' : undefined}>
+        {view === 'overview' && <ProgressCalendar workouts={finished} onWorkout={onWorkout} />}
+        {view === 'stats' && proposals?.length > 0 && (
+          <section className="stack" style={{ marginBottom: 20 }}>
             <div>
-              <div className="eyebrow">Strength trend</div>
-              <h2 style={{ marginTop: 4 }}>{selected?.name || 'Exercise progress'}</h2>
+              <div className="eyebrow">Ready to review</div>
+              <h2 style={{ marginTop: 4 }}>Progression suggestions</h2>
             </div>
-            {selected && (
-              <span className="progress-count muted small">{selected.points.length} sessions</span>
+            {proposals.map((p: Proposal) => (
+              <ProposalCard
+                key={p.id}
+                proposal={p}
+                data={data}
+                selected={
+                  selection[p.id] ??
+                  (p.edits.length ? p.edits.map((_: unknown, i: number) => i) : [0])
+                }
+                setSelected={(v: number[]) => setSelection((s: any) => ({ ...s, [p.id]: v }))}
+                apply={() => apply(p)}
+                reject={() => reject(p)}
+              />
+            ))}
+          </section>
+        )}
+        {view === 'stats' && (
+          <section className="card card-pad">
+            <div className="row space-between">
+              <div>
+                <div className="eyebrow">Strength trend</div>
+                <h2 style={{ marginTop: 4 }}>{selected?.name || 'Exercise progress'}</h2>
+              </div>
+              {selected && (
+                <span className="progress-count muted small">
+                  {selected.points.length} sessions
+                </span>
+              )}
+            </div>
+            {entries.length > 0 && (
+              <div className="form-field" style={{ marginTop: 12 }}>
+                <label htmlFor="progress-exercise">Choose an exercise</label>
+                <select
+                  id="progress-exercise"
+                  className="select"
+                  value={selectedId || ''}
+                  onChange={(e) => setExerciseId(e.target.value)}
+                >
+                  {entries.map(([id, item]) => (
+                    <option key={id} value={id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             )}
-          </div>
-          {entries.length > 0 && (
-            <div className="form-field" style={{ marginTop: 12 }}>
-              <label htmlFor="progress-exercise">Choose an exercise</label>
-              <select
-                id="progress-exercise"
-                className="select"
-                value={selectedId || ''}
-                onChange={(e) => setExerciseId(e.target.value)}
-              >
-                {entries.map(([id, item]) => (
-                  <option key={id} value={id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-          {selected && selected.points.length > 1 ? (
-            <>
-              <div
-                className="chart strength-chart"
-                role="img"
-                aria-label={`Progress trend for ${selected.name}`}
-              >
-                {selected.points.slice(-8).map((p, i, arr) => {
-                  const value = repsOnly ? p.reps : toDisplayWeight(p.weight, data.settings.unit);
-                  const maxValue = Math.max(
-                    1,
-                    ...arr.map((x) =>
-                      repsOnly ? x.reps : toDisplayWeight(x.weight, data.settings.unit),
-                    ),
-                  );
-                  return (
-                    <div className="chart-col" key={p.date}>
-                      <span className="small tabular chart-value">
-                        {value}
-                        {repsOnly ? ' reps' : ''}
-                      </span>
+            {selected && selected.points.length > 1 ? (
+              <>
+                <div
+                  className="chart strength-chart"
+                  role="img"
+                  aria-label={`Progress trend for ${selected.name}`}
+                >
+                  {selected.points.slice(-8).map((p, i, arr) => {
+                    const value = repsOnly ? p.reps : toDisplayWeight(p.weight, data.settings.unit);
+                    const maxValue = Math.max(
+                      1,
+                      ...arr.map((x) =>
+                        repsOnly ? x.reps : toDisplayWeight(x.weight, data.settings.unit),
+                      ),
+                    );
+                    return (
+                      <div className="chart-col" key={p.date}>
+                        <span className="small tabular chart-value">
+                          {value}
+                          {repsOnly ? ' reps' : ''}
+                        </span>
+                        <div
+                          className="chart-bar"
+                          style={{ height: `${Math.max(12, (value / maxValue) * 68)}%` }}
+                        />
+                        <span className="chart-label">{dateLabel(p.date)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="muted small" style={{ margin: '12px 0 0' }}>
+                  {repsOnly
+                    ? 'Best completed working-set reps · assistance is excluded'
+                    : `Best working-set load · ${loadMode === 'per-dumbbell' ? 'per dumbbell' : 'total load'} in ${data.settings.unit}`}
+                </p>
+              </>
+            ) : (
+              <div className="progress-empty">
+                <b>Strength trends will build here</b>
+                <p className="muted small">Complete a few workouts to see how your lifts change.</p>
+              </div>
+            )}
+          </section>
+        )}
+        {view === 'overview' && (
+          <section className="card card-pad">
+            <h2>Weekly volume</h2>
+            <p className="muted small">Completed working sets · Monday–Sunday</p>
+            {finished.length > 0 ? (
+              <>
+                <div
+                  className="chart"
+                  role="img"
+                  aria-label={`Completed working sets per week: ${weeks.map((week) => `${week.label}: ${week.count}`).join(', ')}`}
+                >
+                  {weeks.map((w, i) => (
+                    <div className="chart-col" key={i}>
+                      <span className="small tabular">{w.count}</span>
                       <div
                         className="chart-bar"
-                        style={{ height: `${Math.max(12, (value / maxValue) * 68)}%` }}
+                        style={{
+                          height: `${w.count ? Math.max(8, (w.count / max) * 67) : 2}%`,
+                          opacity: w.count ? 1 : 0.18,
+                        }}
                       />
-                      <span className="chart-label">{dateLabel(p.date)}</span>
+                      <span className="chart-label">{w.label}</span>
                     </div>
-                  );
-                })}
-              </div>
-              <p className="muted small" style={{ margin: '12px 0 0' }}>
-                {repsOnly
-                  ? 'Best completed working-set reps · assistance is excluded'
-                  : `Best working-set load · ${loadMode === 'per-dumbbell' ? 'per dumbbell' : 'total load'} in ${data.settings.unit}`}
-              </p>
-            </>
-          ) : (
-            <div className="progress-empty">
-              <b>Strength trends will build here</b>
-              <p className="muted small">Complete a few workouts to see how your lifts change.</p>
-            </div>
-          )}
-        </section>
-        <section className="card card-pad">
-          <div className="eyebrow">Consistency</div>
-          <h2 style={{ marginTop: 4 }}>Training weeks</h2>
-          {finished.length > 0 ? (
-            <>
-              <div className="chart" aria-label="Workouts per week">
-                {weeks.map((w, i) => (
-                  <div className="chart-col" key={i}>
-                    <span className="small tabular">{w.count || ''}</span>
-                    <div
-                      className="chart-bar"
-                      style={{
-                        height: `${w.count ? Math.max(8, (w.count / max) * 67) : 2}%`,
-                        opacity: w.count ? 1 : 0.18,
-                      }}
-                    />
-                    <span className="chart-label">{w.label}</span>
-                  </div>
-                ))}
-              </div>
-              <div className="row space-between" style={{ marginTop: 13 }}>
-                <span className="muted small">Last 8 weeks</span>
-                <b>{finished.length} completed workouts</b>
-              </div>
-            </>
-          ) : (
-            <p className="progress-empty muted small">
-              Workout consistency will appear after your first session.
-            </p>
-          )}
-        </section>
-      </div>
-      <div className="section-title">
-        <div>
-          <div className="eyebrow">Completed sessions</div>
-          <h2 style={{ marginTop: 4 }}>Workout history</h2>
-        </div>
-      </div>
-      {finished.length === 0 ? (
-        <div className="card card-pad progress-empty">
-          <p className="muted small">Your training history starts with the first workout.</p>
-        </div>
-      ) : (
-        <div className="card card-pad">
-          {finished.map((w: Workout) => (
-            <div key={w.id} className="history-item" style={{ alignItems: 'flex-start' }}>
-              <div className="grow">
-                <div className="row space-between">
-                  <div>
-                    <b>{w.name}</b>
-                    <div className="muted small" style={{ marginTop: 4 }}>
-                      {dateLabel(w.startedAt)} · {duration(w.startedAt, w.completedAt)} min ·{' '}
-                      {completedSets(w)} sets
-                    </div>
-                  </div>
-                  <Button size="sm" variant="secondary" onClick={() => onRepeat(w.id)}>
-                    <RotateCcw size={14} />
-                    Repeat
-                  </Button>
-                </div>
-                <div className="tag-row" style={{ marginTop: 11 }}>
-                  {w.exercises.map((e) => (
-                    <button key={e.id} className="pill" onClick={() => onCorrection(w, e)}>
-                      {e.name}
-                    </button>
                   ))}
                 </div>
-                {(w.feeling || w.notes) && (
-                  <p className="muted small" style={{ margin: '10px 0 0' }}>
-                    {w.feeling && <b>{w.feeling}. </b>}
-                    {w.notes}
-                  </p>
-                )}
-              </div>
-            </div>
-          ))}
+                <div className="row space-between" style={{ marginTop: 13 }}>
+                  <span className="muted small">Last 8 weeks · week of</span>
+                  <span className="small">{weeks.at(-1)?.count} sets this week</span>
+                </div>
+              </>
+            ) : (
+              <p className="progress-empty muted small">
+                Weekly volume will appear after your first completed workout.
+              </p>
+            )}
+          </section>
+        )}
+      </div>
+      {view === 'overview' && (
+        <div className="card card-pad progress-links">
+          <button type="button" onClick={() => openView('stats')}>
+            <span>
+              <span>Exercise stats</span>
+              <span className="muted small">
+                Strength trends
+                {proposals?.length ? ` · ${proposals.length} suggestions to review` : ''}
+              </span>
+            </span>
+            <ArrowRight size={18} aria-hidden="true" />
+          </button>
+          <button type="button" onClick={() => openView('history')}>
+            <span>
+              <span>Workout history</span>
+              <span className="muted small">All sessions, corrections and repeat workouts</span>
+            </span>
+            <ArrowRight size={18} aria-hidden="true" />
+          </button>
         </div>
+      )}
+      {view === 'history' && (
+        <>
+          {finished.length === 0 ? (
+            <div className="card card-pad progress-empty">
+              <p className="muted small">Your training history starts with the first workout.</p>
+            </div>
+          ) : (
+            <div className="card card-pad">
+              {finished.map((w: Workout) => (
+                <div key={w.id} className="history-item" style={{ alignItems: 'flex-start' }}>
+                  <div className="grow">
+                    <div className="row space-between">
+                      <div>
+                        <button className="history-workout-link" onClick={() => onWorkout(w.id)}>
+                          <b>{w.name}</b>
+                        </button>
+                        <div className="muted small" style={{ marginTop: 4 }}>
+                          {dateLabel(w.startedAt)} · {duration(w.startedAt, w.completedAt)} min ·{' '}
+                          {completedSets(w)} sets
+                        </div>
+                      </div>
+                      <Button size="sm" variant="secondary" onClick={() => onRepeat(w.id)}>
+                        <RotateCcw size={14} />
+                        Repeat
+                      </Button>
+                    </div>
+                    {(w.feeling || w.notes) && (
+                      <p className="muted small" style={{ margin: '10px 0 0' }}>
+                        {w.feeling && <b>{w.feeling}. </b>}
+                        {w.notes}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </main>
   );

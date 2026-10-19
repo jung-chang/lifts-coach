@@ -11,6 +11,7 @@ import type {
   WorkoutSet,
 } from './types';
 import { catalog, catalogVersion } from './catalog';
+import { trainingDateAt } from './trainingDates';
 
 export { catalog, catalogVersion } from './catalog';
 export const id = (prefix = 'id') =>
@@ -215,11 +216,14 @@ function makeWorkout(
   names: Map<string, string>,
 ): Workout {
   const stamp = now();
+  const trainingTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
   return {
     id: id('workout'),
     routineId,
     name,
     startedAt: stamp,
+    trainingDate: trainingDateAt(stamp, trainingTimezone),
+    trainingTimezone,
     status: 'active',
     updatedAt: stamp,
     exercises: prescriptions.map((p) => {
@@ -1148,6 +1152,30 @@ export function validateBackup(input: unknown): AppData {
   for (const r of d.routines) validateRoutine(r);
   let activeCount = 0;
   for (const w of d.workouts) {
+    if (
+      w.trainingDate !== undefined &&
+      (!/^\d{4}-\d{2}-\d{2}$/.test(w.trainingDate) ||
+        Number.isNaN(Date.parse(`${w.trainingDate}T12:00:00Z`)) ||
+        new Date(`${w.trainingDate}T12:00:00Z`).toISOString().slice(0, 10) !== w.trainingDate)
+    )
+      fail('invalid training date');
+    if (w.trainingTimezone !== undefined) {
+      try {
+        if (typeof w.trainingTimezone !== 'string' || !w.trainingTimezone)
+          fail('invalid training timezone');
+        new Intl.DateTimeFormat('en-US', { timeZone: w.trainingTimezone });
+      } catch {
+        fail('invalid training timezone');
+      }
+    }
+    if (
+      w.communityVisibility !== undefined &&
+      (!record(w.communityVisibility) ||
+        !['private', 'community'].includes(w.communityVisibility.visibility) ||
+        !Number.isInteger(w.communityVisibility.policyRevision) ||
+        w.communityVisibility.policyRevision < 0)
+    )
+      fail('invalid workout visibility');
     if (
       typeof w.id !== 'string' ||
       !w.id ||

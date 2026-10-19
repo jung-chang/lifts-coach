@@ -34,6 +34,7 @@ const privateValues = [
   'CLOUDFLARE_API_TOKEN',
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
+  'COACH_OWNER_EMAIL',
 ]
   .map((name) => process.env[name])
   .filter((value) => value && value.length >= 12 && !value.startsWith('REPLACE_'));

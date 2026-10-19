@@ -12,8 +12,11 @@ vi.mock('react', () => ({
 let connection: { onLine: boolean };
 let events: EventTarget;
 let remote: { data: AppData; revision: number };
+let currentAccount: string;
 let requests: SyncRequest[];
 let receipts: Map<string, number>;
+let localStorageValues: Map<string, string>;
+let stateReadAccounts: string[];
 let useStore: (typeof import('../src/lib/store'))['useAppStore'];
 
 beforeEach(async () => {
@@ -21,8 +24,11 @@ beforeEach(async () => {
   connection = { onLine: false };
   events = new EventTarget();
   remote = { data: emptyData(), revision: 0 };
+  currentAccount = 'account-a';
   requests = [];
   receipts = new Map();
+  localStorageValues = new Map();
+  stateReadAccounts = [];
   vi.stubGlobal('indexedDB', new IDBFactory());
   vi.stubGlobal('navigator', connection);
   vi.stubGlobal('window', events);
@@ -30,15 +36,36 @@ beforeEach(async () => {
   const Dexie = (await import('dexie')).default;
   Dexie.dependencies.indexedDB = globalThis.indexedDB;
   Dexie.dependencies.IDBKeyRange = globalThis.IDBKeyRange;
-  const storage = new Map<string, string>();
   vi.stubGlobal('localStorage', {
-    getItem: (key: string) => storage.get(key) ?? null,
-    setItem: (key: string, value: string) => storage.set(key, value),
+    getItem: (key: string) => localStorageValues.get(key) ?? null,
+    setItem: (key: string, value: string) => localStorageValues.set(key, value),
+    removeItem: (key: string) => localStorageValues.delete(key),
   });
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (_url: string, init?: RequestInit) => {
-      if (!init?.method) return Response.json(remote);
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === '/api/session')
+        return Response.json({
+          accountId: currentAccount,
+          email: `${currentAccount}@example.test`,
+          coachEnabled: true,
+          profile: {
+            publicId: `${currentAccount}-public`,
+            displayName: 'Test',
+            trainingTimezone: 'UTC',
+          },
+          sharing: {
+            summaryEnabled: false,
+            autoPublishWorkouts: false,
+            policyRevision: 1,
+            audienceAcknowledgedAt: null,
+            enabledAt: null,
+          },
+        });
+      if (!init?.method) {
+        stateReadAccounts.push(new Headers(init?.headers).get('X-Lifts-Account') ?? '');
+        return Response.json(remote);
+      }
       const body = JSON.parse(String(init.body)) as SyncRequest;
       requests.push(body);
       const receipt = receipts.get(body.operationId);
@@ -72,7 +99,7 @@ describe('durable local store synchronization', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string, init?: RequestInit) => {
-        if (!init?.method) await held;
+        if (url === '/api/state' && !init?.method) await held;
         return originalFetch(url, init);
       }),
     );
@@ -98,7 +125,7 @@ describe('durable local store synchronization', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string, init?: RequestInit) => {
-        if (!init?.method) await held;
+        if (url === '/api/state' && !init?.method) await held;
         return originalFetch(url, init);
       }),
     );
@@ -146,12 +173,219 @@ describe('durable local store synchronization', () => {
     expect(remote.data.settings.profile.goals).toBe('Get stronger');
   });
 
+  it('keeps each verified account in its own local partition when the shared device changes accounts', async () => {
+    await useStore().update((data) => ({ ...data, routines: [createRoutine('Account A')] }));
+    currentAccount = 'account-b';
+    await useStore().refreshSession();
+    expect(useStore().data?.routines).toEqual([]);
+    await useStore().update((data) => ({ ...data, routines: [createRoutine('Account B')] }));
+    currentAccount = 'account-a';
+    await useStore().refreshSession();
+    expect(useStore().data?.routines[0].name).toBe('Account A');
+  });
+
+  it('discards a delayed account A pull after the same tab switches to account B', async () => {
+    await useStore().refreshSession();
+    currentAccount = 'account-b';
+    await useStore().refreshSession();
+    await useStore().update((data) => ({ ...data, routines: [createRoutine('B local data')] }));
+    currentAccount = 'account-a';
+    await useStore().refreshSession();
+    connection.onLine = true;
+    let release!: () => void;
+    let reachedPull!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reached = new Promise<void>((resolve) => {
+      reachedPull = resolve;
+    });
+    const originalFetch = globalThis.fetch;
+    let firstPull = true;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === '/api/state' && !init?.method && firstPull) {
+          firstPull = false;
+          reachedPull();
+          await held;
+        }
+        return originalFetch(url, init);
+      }),
+    );
+    const pendingPull = useStore().retrySync();
+    await reached;
+    currentAccount = 'account-b';
+    connection.onLine = false;
+    await useStore().refreshSession();
+    release();
+    await pendingPull;
+    expect(useStore().session?.accountId).toBe('account-b');
+    expect(useStore().data?.routines[0].name).toBe('B local data');
+    expect(requests).toHaveLength(0);
+  });
+
+  it('ignores a stale account A session response after account B verifies', async () => {
+    let releaseA!: () => void;
+    const heldA = new Promise<void>((resolve) => {
+      releaseA = resolve;
+    });
+    const originalFetch = globalThis.fetch;
+    let holdFirstSession = true;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === '/api/session' && holdFirstSession) {
+          holdFirstSession = false;
+          const account = currentAccount;
+          if (account === 'account-a') {
+            await heldA;
+            return Response.json({
+              accountId: account,
+              email: `${account}@example.test`,
+              coachEnabled: true,
+              profile: {
+                publicId: `${account}-public`,
+                displayName: 'Test',
+                trainingTimezone: 'UTC',
+              },
+              sharing: {
+                summaryEnabled: false,
+                autoPublishWorkouts: false,
+                policyRevision: 1,
+                audienceAcknowledgedAt: null,
+                enabledAt: null,
+              },
+            });
+          }
+        }
+        return originalFetch(url, init);
+      }),
+    );
+    const staleA = useStore().refreshSession();
+    currentAccount = 'account-b';
+    await useStore().refreshSession();
+    releaseA();
+    await staleA;
+    expect(useStore().session?.accountId).toBe('account-b');
+    expect(localStorageValues.get('training-verified-account')).toBe('account-b');
+  });
+
+  it('clears cached verified identity after an explicit 401', async () => {
+    await useStore().refreshSession();
+    expect(localStorageValues.get('training-verified-account')).toBe('account-a');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        url === '/api/session' ? new Response(null, { status: 401 }) : Response.json(remote),
+      ),
+    );
+    await useStore().refreshSession();
+    expect(localStorageValues.has('training-verified-account')).toBe(false);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new Error('network unavailable');
+      }),
+    );
+    await useStore().refreshSession();
+    expect(useStore().identityStatus).toBe('local');
+    expect(useStore().session).toBeNull();
+  });
+
+  it('invalidates a delayed pull when signing out', async () => {
+    await useStore().refreshSession();
+    connection.onLine = true;
+    let release!: () => void;
+    let reachedPull!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const reached = new Promise<void>((resolve) => {
+      reachedPull = resolve;
+    });
+    const originalFetch = globalThis.fetch;
+    let hold = true;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === '/api/state' && !init?.method && hold) {
+          hold = false;
+          reachedPull();
+          await held;
+        }
+        return originalFetch(url, init);
+      }),
+    );
+    const pendingPull = useStore().retrySync();
+    await reached;
+    await useStore().signOut();
+    release();
+    await pendingPull;
+    expect(useStore().session).toBeNull();
+    expect(useStore().identityStatus).toBe('local');
+    expect(localStorageValues.has('training-verified-account')).toBe(false);
+  });
+
+  it('marks imported backup writes as restores so publication intent cannot be replayed', async () => {
+    const data = { ...emptyData(), routines: [createRoutine('Restored backup')] };
+    await useStore().importData(data);
+    expect(useStore().pendingCount).toBe(1);
+    reconnect();
+    await waitForSync();
+    expect(requests[0]).toMatchObject({ accountId: 'account-a', restore: true });
+  });
+
+  it('retains the restore marker when resolving an import conflict with local data', async () => {
+    const imported = { ...emptyData(), routines: [createRoutine('Imported backup')] };
+    await useStore().importData(imported);
+    remote = { data: { ...emptyData(), routines: [createRoutine('Remote update')] }, revision: 1 };
+    reconnect();
+    await vi.waitFor(() => expect(useStore().syncStatus).toBe('conflict'));
+    await useStore().resolveConflict('local');
+    await waitForSync();
+    expect(requests).toHaveLength(2);
+    expect(requests[1]).toMatchObject({ accountId: 'account-a', restore: true });
+    expect(remote.data.routines[0].name).toBe('Imported backup');
+  });
+
+  it('does not upload pending local data after session identity changes', async () => {
+    await useStore().update((data) => ({ ...data, routines: [createRoutine('Private to A')] }));
+    currentAccount = 'account-b';
+    connection.onLine = true;
+    await useStore().refreshSession();
+    expect(requests).toHaveLength(0);
+    expect(useStore().data?.routines).toEqual([]);
+  });
+
+  it('keeps legacy data unowned until claimed and preserves its backup after claim', async () => {
+    const legacyData = { ...emptyData(), routines: [createRoutine('Old local data')] };
+    const Dexie = (await import('dexie')).default;
+    const legacyDb = new Dexie('training-lab');
+    legacyDb.version(4).stores({
+      records: 'key',
+      meta: 'key',
+      outbox: 'operationId,baseRevision,accountId',
+    });
+    await legacyDb.table('records').put({ key: 'app-data', data: legacyData });
+    await legacyDb.close();
+    await useStore().refreshSession();
+    expect(useStore().legacyAvailable).toBe(true);
+    expect(JSON.parse(await useStore().exportLegacyData()).routines[0].name).toBe('Old local data');
+    expect(requests).toHaveLength(0);
+    await useStore().claimLegacyData();
+    expect(useStore().data?.routines[0].name).toBe('Old local data');
+    expect(useStore().legacyAvailable).toBe(true);
+    expect(JSON.parse(await useStore().exportLegacyData()).routines[0].name).toBe('Old local data');
+  });
+
   it('publishes a durable pending count and last successful sync time', async () => {
     await useStore().update((data) => ({ ...data, routines: [createRoutine('Pending locally')] }));
     expect(useStore().pendingCount).toBe(1);
     expect(useStore().lastSyncedAt).toBeNull();
     reconnect();
     await waitForSync();
+    expect(stateReadAccounts).toContain('account-a');
     expect(useStore().pendingCount).toBe(0);
     expect(useStore().lastSyncedAt).toEqual(expect.any(String));
 
@@ -183,6 +417,10 @@ describe('durable local store synchronization', () => {
       }),
     );
     await useStore().deleteAllData();
+    const deleteCall = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.find((call) => call[1]?.method === 'DELETE');
+    expect(new Headers(deleteCall?.[1]?.headers).get('X-Lifts-Account')).toBe('account-a');
     expect(useStore().data).toEqual(emptyData());
     expect(useStore().pendingCount).toBe(0);
     expect(useStore().syncStatus).toBe('synced');
@@ -197,7 +435,27 @@ describe('durable local store synchronization', () => {
     }));
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => Response.json({}, { status: 503 })),
+      vi.fn(async (url: string, init?: RequestInit) =>
+        url === '/api/session'
+          ? Response.json({
+              accountId: currentAccount,
+              email: `${currentAccount}@example.test`,
+              coachEnabled: true,
+              profile: {
+                publicId: `${currentAccount}-public`,
+                displayName: 'Test',
+                trainingTimezone: 'UTC',
+              },
+              sharing: {
+                summaryEnabled: false,
+                autoPublishWorkouts: false,
+                policyRevision: 1,
+                audienceAcknowledgedAt: null,
+                enabledAt: null,
+              },
+            })
+          : Response.json({}, { status: 503 }),
+      ),
     );
     await expect(useStore().deleteAllData()).rejects.toThrow('Data deletion failed');
     expect(useStore().data?.routines[0].name).toBe('Keep me');

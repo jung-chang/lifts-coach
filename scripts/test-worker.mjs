@@ -4,13 +4,14 @@ assert(
   ['localhost', '127.0.0.1'].includes(new URL(origin).hostname),
   'Integration test only operates on a local Worker.',
 );
+const session = await (await fetch(`${origin}/api/session`)).json();
 const request = (path, body) =>
   fetch(
     `${origin}${path}`,
     body
       ? {
           method: 'PUT',
-          headers: { 'content-type': 'application/json' },
+          headers: { 'content-type': 'application/json', 'X-Lifts-Account': session.accountId },
           body: JSON.stringify(body),
         }
       : undefined,
@@ -19,6 +20,7 @@ const initial = await (await request('/api/state')).json();
 assert.equal(initial.data.schemaVersion, 1);
 const first = {
   operationId: crypto.randomUUID(),
+  accountId: session.accountId,
   deviceId: 'integration-device',
   baseRevision: initial.revision,
   data: structuredClone(initial.data),

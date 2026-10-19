@@ -33,8 +33,9 @@ a public launch. Icons and a manifest alone do not establish production readines
 
 ## Remaining setup decisions
 
-- Choose the invite/sign-in method, account recovery, and access revocation.
-  Decide whether to use an Access email allowlist for the beta or app-managed auth.
+- The owner chose email-linked accounts with Cloudflare Access. Follow the
+  [account schema contract](account-schema.md) for stable IDs, validated identity
+  mapping and safe migration. Finalize beta admission, recovery and revocation.
 - Domain ownership/DNS and the intended production hostname. Keep one canonical
   origin: installed app identity and local data are tied to that origin.
 
@@ -46,15 +47,16 @@ verified. Use synthetic accounts and isolated preview data for all checks.
 
 ## Release blockers for a multi-user beta
 
-- Confirmed in code: the client currently uses one `training-lab` IndexedDB
-  database and one `app-data` record, with no verified account owner attached to
-  the local records/outbox. Signing in as another account on the same browser
-  must not reuse or upload the previous person's data. Implement account-bound
-  local storage, explicit switching/logout and safe migration before invitations.
-- Confirmed in code: provisioned Coach providers/chat are available to every
-  authenticated account. Add a server-enforced owner entitlement before admitting
-  tracking-only beta users. The existing basic chat throttle does not provide
-  that restriction or a spending budget.
+- Implemented: IndexedDB records, revision metadata and outbox operations carry
+  verified account ownership. Legacy unowned history stays separate until an
+  explicit claim; account switching and sign-out invalidate delayed requests.
+  Rehearse the migration and shared-device experience before invitations.
+- Implemented: server-side Coach entitlement in `accounts.coach_enabled`. The
+  optional private Worker secret `COACH_OWNER_EMAIL` grants access only to its
+  matching verified Access email; all other real accounts remain tracking-only.
+  CI provisions it from the same-named GitHub secret without placing its value
+  in source or generated configuration. Legacy history never grants permission.
+  The basic request throttle is not a spending budget.
 - Verify two accounts cannot read, write, restore, sync, or send Coach context
   belonging to each other. Exercise account switching on a shared browser and
   installed app, logout/revocation, offline local data ownership, and deletion.

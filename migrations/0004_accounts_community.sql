@@ -1,0 +1,28 @@
+PRAGMA foreign_keys = OFF;
+ALTER TABLE account_state RENAME TO legacy_account_state;
+ALTER TABLE state_chunks RENAME TO legacy_state_chunks;
+ALTER TABLE sync_receipts RENAME TO legacy_sync_receipts;
+ALTER TABLE coach_requests RENAME TO legacy_coach_requests;
+
+CREATE TABLE accounts (id TEXT PRIMARY KEY NOT NULL, email TEXT NOT NULL, email_normalized TEXT NOT NULL UNIQUE, access_issuer TEXT NOT NULL, access_subject TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled')), coach_enabled INTEGER NOT NULL DEFAULT 0 CHECK (coach_enabled IN (0,1)), created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE UNIQUE INDEX accounts_access_identity_idx ON accounts(access_issuer, access_subject);
+CREATE TABLE profiles (account_id TEXT PRIMARY KEY NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, public_id TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL, training_timezone TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+CREATE TABLE sharing_settings (account_id TEXT PRIMARY KEY NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, summary_enabled INTEGER NOT NULL DEFAULT 0 CHECK (summary_enabled IN (0,1)), auto_publish_workouts INTEGER NOT NULL DEFAULT 0 CHECK (auto_publish_workouts IN (0,1)), workout_sharing_enabled_at TEXT, audience_acknowledged_at TEXT, policy_revision INTEGER NOT NULL DEFAULT 1, updated_at TEXT NOT NULL);
+CREATE TABLE account_state (account_id TEXT PRIMARY KEY NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, payload TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, device_id TEXT NOT NULL, last_operation_id TEXT NOT NULL DEFAULT '');
+CREATE TABLE state_chunks (account_id TEXT NOT NULL REFERENCES account_state(account_id) ON DELETE CASCADE, chunk_index INTEGER NOT NULL, content TEXT NOT NULL, PRIMARY KEY (account_id, chunk_index));
+CREATE TABLE sync_receipts (account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, operation_id TEXT NOT NULL, revision INTEGER NOT NULL, created_at TEXT NOT NULL, fingerprint TEXT NOT NULL, PRIMARY KEY (account_id, operation_id));
+CREATE INDEX sync_receipts_created_at_idx ON sync_receipts(created_at);
+CREATE TABLE coach_requests (account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, id TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY (account_id, id));
+CREATE INDEX coach_requests_account_created_idx ON coach_requests(account_id, created_at);
+CREATE TABLE training_projection_state (account_id TEXT PRIMARY KEY NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, source_revision INTEGER NOT NULL, built_at TEXT NOT NULL);
+CREATE TABLE training_workouts (account_id TEXT NOT NULL, workout_id TEXT NOT NULL, started_at TEXT NOT NULL, completed_at TEXT NOT NULL, training_date TEXT NOT NULL, training_timezone TEXT NOT NULL, source_revision INTEGER NOT NULL, PRIMARY KEY (account_id, workout_id), FOREIGN KEY (account_id) REFERENCES training_projection_state(account_id) ON DELETE CASCADE);
+CREATE INDEX training_workouts_date_idx ON training_workouts(account_id, training_date);
+CREATE TABLE training_sets (account_id TEXT NOT NULL, workout_id TEXT NOT NULL, set_id TEXT NOT NULL, exercise_instance_id TEXT NOT NULL, exercise_id TEXT NOT NULL, load_mode TEXT NOT NULL CHECK (load_mode IN ('external','per-dumbbell','bodyweight','assistance')), weight_lb REAL NOT NULL CHECK (weight_lb >= 0), reps INTEGER NOT NULL CHECK (reps >= 0), kind TEXT NOT NULL CHECK (kind IN ('working','warmup')), completed_at TEXT NOT NULL, PRIMARY KEY (account_id, workout_id, exercise_instance_id, set_id), FOREIGN KEY (account_id, workout_id) REFERENCES training_workouts(account_id, workout_id) ON DELETE CASCADE);
+CREATE INDEX training_sets_exercise_idx ON training_sets(account_id, exercise_id, load_mode, kind);
+CREATE TABLE account_blocks (account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, blocked_account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, created_at TEXT NOT NULL, PRIMARY KEY (account_id, blocked_account_id), CHECK (account_id <> blocked_account_id));
+CREATE INDEX account_blocks_reverse_idx ON account_blocks(blocked_account_id, account_id);
+CREATE TABLE workout_visibility (account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE, workout_id TEXT NOT NULL, visibility TEXT NOT NULL CHECK (visibility IN ('private','community')), decision_revision INTEGER NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY (account_id, workout_id));
+CREATE TABLE workout_publications (account_id TEXT NOT NULL, workout_id TEXT NOT NULL, id TEXT NOT NULL UNIQUE, activity_at TEXT NOT NULL, published_at TEXT NOT NULL, shared_title TEXT, PRIMARY KEY (account_id, workout_id), FOREIGN KEY (account_id, workout_id) REFERENCES training_workouts(account_id, workout_id) ON DELETE CASCADE);
+CREATE INDEX publications_feed_idx ON workout_publications(activity_at DESC, id DESC);
+CREATE INDEX publications_profile_idx ON workout_publications(account_id, activity_at DESC, id DESC);
+PRAGMA foreign_keys = ON;

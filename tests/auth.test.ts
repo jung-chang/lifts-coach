@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
-import { authorize } from '../worker/auth';
+import { authorize, verifiedIdentity } from '../worker/auth';
 
 const issuer = 'https://prototype-test.cloudflareaccess.com';
 const env = { ACCESS_TEAM_DOMAIN: issuer, ACCESS_AUD: 'personal-app' };
@@ -26,9 +26,17 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 async function request(
-  overrides: { issuer?: string; audience?: string; expiry?: string; sub?: string | null } = {},
+  overrides: {
+    issuer?: string;
+    audience?: string;
+    expiry?: string;
+    sub?: string | null;
+    email?: string | null;
+  } = {},
 ) {
-  let jwt = new SignJWT({ email: 'owner@example.test' }).setProtectedHeader({
+  const claims: Record<string, unknown> = {};
+  if (overrides.email !== null) claims.email = overrides.email ?? 'owner@example.test';
+  let jwt = new SignJWT(claims).setProtectedHeader({
     alg: 'RS256',
     kid: 'test-key',
   });
@@ -47,6 +55,11 @@ async function request(
 describe('Cloudflare Access authorization', () => {
   it('accepts a signed token for the configured issuer and audience', async () => {
     expect(await authorize(await request(), env)).toMatch(/^access:[a-f0-9]{64}$/);
+    expect(await verifiedIdentity(await request(), env)).toEqual({
+      issuer,
+      subject: 'owner-sub',
+      email: 'owner@example.test',
+    });
   });
   it('derives stable, distinct account identities from verified subjects', async () => {
     const first = await authorize(await request(), env);
@@ -66,6 +79,10 @@ describe('Cloudflare Access authorization', () => {
   });
   it('rejects a verified token without a subject claim', async () => {
     expect(await authorize(await request({ sub: null }), env)).toBeNull();
+  });
+  it('rejects a verified token without a valid authenticated email claim', async () => {
+    expect(await verifiedIdentity(await request({ email: null }), env)).toBeNull();
+    expect(await verifiedIdentity(await request({ email: 'not-an-email' }), env)).toBeNull();
   });
   it('rejects missing configuration, missing token, and malformed tokens', async () => {
     const plain = new Request('https://training-lab.example.workers.dev/api/state');

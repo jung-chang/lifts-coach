@@ -79,7 +79,11 @@ jobs:
           D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID || vars.D1_DATABASE_ID }}
           ACCESS_TEAM_DOMAIN: ${{ secrets.ACCESS_TEAM_DOMAIN || vars.ACCESS_TEAM_DOMAIN }}
           ACCESS_AUD: ${{ secrets.ACCESS_AUD || vars.ACCESS_AUD }}
+          COACH_OWNER_EMAIL: ${{ secrets.COACH_OWNER_EMAIL }}
         run: |
           pnpm cloudflare:configure
+          if [ -n "$COACH_OWNER_EMAIL" ]; then
+            printf '%s' "$COACH_OWNER_EMAIL" | pnpm exec wrangler secret put COACH_OWNER_EMAIL --config wrangler.deploy.json
+          fi
           pnpm exec wrangler d1 migrations apply lifts-coach --remote --config wrangler.deploy.json
           pnpm exec wrangler deploy --config wrangler.deploy.json
