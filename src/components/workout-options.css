@@ -1,0 +1,66 @@
+.workout-options-trigger {
+  margin-top: 12px;
+}
+.workout-option-actions {
+  display: grid;
+}
+.workout-option-actions > button {
+  justify-content: flex-start;
+  min-height: 52px;
+  border-radius: 0;
+}
+.workout-option-actions > button + button {
+  border-top: 1px solid var(--border);
+}
+.workout-option-section {
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+  margin-top: 20px;
+}
+.workout-option-section h3 {
+  font-size: 14px;
+  font-weight: 500;
+  margin-bottom: 12px;
+}
+.workout-load-mode {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+.workout-load-mode .select {
+  width: auto;
+  max-width: 65%;
+}
+.workout-replacement {
+  display: flex;
+  flex-direction: column;
+  height: min(480px, 55dvh);
+  gap: 12px;
+}
+.workout-replacement > button {
+  align-self: flex-start;
+  flex-shrink: 0;
+}
+.workout-replacement > .search-wrap {
+  flex-shrink: 0;
+}
+.workout-replacement > p {
+  margin: 0;
+}
+.workout-replacement-results {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.workout-replacement-meta {
+  display: block;
+  margin-top: 4px;
+}
+.workout-replacement-results .exercise-result {
+  min-height: 64px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+}

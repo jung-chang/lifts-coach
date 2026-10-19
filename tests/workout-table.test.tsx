@@ -52,6 +52,48 @@ async function beginWorkout() {
 }
 
 describe('workout set table', () => {
+  it('replaces an exercise through a searchable drawer without changing the routine', async () => {
+    await beginWorkout();
+    const routineBefore = structuredClone(fixture.data.routines);
+    fireEvent.click(screen.getByRole('button', { name: 'Options' }));
+    expect(screen.queryByText('Skip exercise')).toBeNull();
+    expect(screen.queryByText('Move exercise')).toBeNull();
+    expect(document.querySelector('.workout-focus details')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Replace exercise' }));
+    const search = screen.getByRole('textbox', { name: 'Search replacement exercises' });
+    fireEvent.change(search, { target: { value: 'no such synthetic exercise' } });
+    expect(screen.getByText('No exercises found.')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    const replacement = catalog.find((item) => item.id !== catalog[0].id)!;
+    fireEvent.change(search, { target: { value: replacement.name } });
+    const dialog = screen.getByRole('dialog', { name: 'Replace exercise' });
+    fireEvent.click(
+      within(dialog).getByRole('button', {
+        name: `${replacement.name} ${replacement.muscles.join(', ')} · ${replacement.equipment}`,
+      }),
+    );
+    await waitFor(() =>
+      expect(fixture.data.workouts[0].exercises[0].exerciseId).toBe(replacement.id),
+    );
+    expect(fixture.data.routines).toEqual(routineBefore);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.getByRole('table', { name: /sets/i })).toBeTruthy();
+  });
+
+  it('adds a warm-up from the drawer and returns immediately to logging', async () => {
+    await beginWorkout();
+    fireEvent.click(screen.getByRole('button', { name: 'Options' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add warm-up set' }));
+    await waitFor(() =>
+      expect(
+        fixture.data.workouts[0].exercises[0].actualSets.filter(
+          (set: any) => set.kind === 'warmup',
+        ),
+      ).toHaveLength(1),
+    );
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('opens an expanded own-workout summary from history with every exercise visible', () => {
     const started = startWorkoutDomain(fixture.data, fixture.data.routines[0].id);
     const workout = started.workouts[0];
@@ -223,12 +265,12 @@ describe('workout set table', () => {
   it('keeps common session controls in Options without duplicating destructive actions', async () => {
     await beginWorkout();
     fireEvent.click(screen.getByText('Options'));
-    const options = screen.getByText('Options').closest('details')!;
+    const options = screen.getByRole('dialog', { name: 'Exercise options' });
     expect(within(options).getByRole('button', { name: 'Add working set' })).toBeTruthy();
-    expect(within(options).getByRole('button', { name: 'Warm-up' })).toBeTruthy();
-    expect(within(options).getByRole('button', { name: 'Skip exercise' })).toBeTruthy();
-    expect(within(options).getByLabelText('Replace current exercise for today')).toBeTruthy();
+    expect(within(options).getByRole('button', { name: 'Add warm-up set' })).toBeTruthy();
+    expect(within(options).getByRole('button', { name: 'Replace exercise' })).toBeTruthy();
     expect(within(options).queryByRole('button', { name: /discard workout/i })).toBeNull();
+    fireEvent.click(within(options).getByRole('button', { name: 'Close' }));
     expect(screen.getByRole('button', { name: 'Previous' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Next' })).toBeTruthy();
   });

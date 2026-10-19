@@ -7,8 +7,6 @@ import {
   CheckCircle2,
   Clock3,
   Dumbbell,
-  ArrowDown,
-  ArrowUp,
   FileDown,
   FileUp,
   History,
@@ -34,7 +32,6 @@ import {
   discardWorkout,
   applyProposal,
   rejectProposal,
-  reorderExercises,
   progressionProposals,
   toDisplayWeight,
   fromDisplayWeight,
@@ -61,6 +58,7 @@ import { ProposalCard } from './components/ProposalCard';
 import { Sheet } from './components/ui/Sheet';
 import { RoutineEditor } from './components/RoutineEditor';
 import { SetTable } from './components/SetTable';
+import { WorkoutOptions } from './components/WorkoutOptions';
 import { FirstRunOnboarding } from './components/FirstRunOnboarding';
 import { formatLoadValue } from './components/LoadSemantics';
 import { SyncDetails } from './components/SyncDetails';
@@ -1838,34 +1836,6 @@ function WorkoutScreen({
         w.id === workout.id ? { ...w, restEndsAt: Date.now() + seconds * 1000 } : w,
       ),
     }));
-  const markExerciseSkipped = () => {
-    if (!ex) return;
-    const before = data;
-    mutate(
-      (d: AppData) => ({
-        ...d,
-        workouts: d.workouts.map((w: Workout) =>
-          w.id === workout.id
-            ? {
-                ...w,
-                exercises: w.exercises.map((e: WorkoutExercise) =>
-                  e.id !== ex.id
-                    ? e
-                    : {
-                        ...e,
-                        actualSets: e.actualSets.map((s: WorkoutSet) =>
-                          s.status === 'incomplete' ? { ...s, status: 'skipped' } : s,
-                        ),
-                      },
-                ),
-              }
-            : w,
-        ),
-      }),
-      'Exercise skipped',
-    );
-    say('Exercise skipped');
-  };
   return (
     <div className="workout-focus">
       <div className="page-heading">
@@ -1991,124 +1961,27 @@ function WorkoutScreen({
               Next <ArrowRight size={16} />
             </Button>
           </div>
-          <details className="card card-pad workout-options" style={{ marginTop: 16 }}>
-            <summary>
-              <b>Options</b>
-              <span className="muted small">Adjust this session</span>
-            </summary>
-            <WorkoutVisibilityControl
-              session={session}
-              workout={workout}
-              synced={syncStatus === 'synced'}
-              onLocalChange={saveVisibility}
-            />
-            <div className="row" style={{ flexWrap: 'wrap', marginTop: 14 }}>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() =>
-                  mutate((d: AppData) => addWorkoutSet(d, workout.id, ex.id), 'Set added')
-                }
-              >
-                <Plus size={15} /> Add working set
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() =>
-                  mutate(
-                    (d: AppData) => addWorkoutSet(d, workout.id, ex.id, 'warmup'),
-                    'Warm-up set added',
-                  )
-                }
-              >
-                <Plus size={15} /> Warm-up
-              </Button>
-              <Button size="sm" variant="ghost" onClick={markExerciseSkipped}>
-                Skip exercise
-              </Button>
-            </div>
-            {ex.loadMode === 'bodyweight' && ex.actualSets.length > 0 && (
-              <div className="stack" style={{ marginTop: 14 }}>
-                <div className="small muted">Load modes</div>
-                {ex.actualSets.map((set, index) => (
-                  <label key={set.id} className="row space-between small">
-                    {set.kind === 'warmup' ? 'Warm-up' : 'Set'} {index + 1}
-                    <select
-                      className="select"
-                      style={{ width: 'auto', maxWidth: '70%' }}
-                      aria-label={`Set ${index + 1} load mode`}
-                      value={set.loadMode || ex.loadMode}
-                      onChange={(event) =>
-                        editSet(ex.id, set, {
-                          loadMode: event.target.value as WorkoutSet['loadMode'],
-                        })
-                      }
-                    >
-                      <option value="bodyweight">Added weight</option>
-                      <option value="assistance">Assistance</option>
-                    </select>
-                  </label>
-                ))}
-              </div>
-            )}
-            {workout.exercises.length > 1 && (
-              <div className="row space-between workout-option-row">
-                <span className="muted small">Move exercise</span>
-                <div className="row">
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label="Move exercise earlier"
-                    disabled={currentEx === 0}
-                    onClick={() => {
-                      const ids = workout.exercises.map((item: WorkoutExercise) => item.id);
-                      [ids[currentEx - 1], ids[currentEx]] = [ids[currentEx], ids[currentEx - 1]];
-                      mutate(
-                        (d: AppData) => reorderExercises(d, workout.id, ids),
-                        'Exercise order updated',
-                      );
-                      setCurrentEx(currentEx - 1);
-                    }}
-                  >
-                    <ArrowUp size={16} />
-                  </Button>
-                  <Button
-                    size="icon"
-                    variant="ghost"
-                    aria-label="Move exercise later"
-                    disabled={currentEx >= workout.exercises.length - 1}
-                    onClick={() => {
-                      const ids = workout.exercises.map((item: WorkoutExercise) => item.id);
-                      [ids[currentEx + 1], ids[currentEx]] = [ids[currentEx], ids[currentEx + 1]];
-                      mutate(
-                        (d: AppData) => reorderExercises(d, workout.id, ids),
-                        'Exercise order updated',
-                      );
-                      setCurrentEx(currentEx + 1);
-                    }}
-                  >
-                    <ArrowDown size={16} />
-                  </Button>
-                </div>
-              </div>
-            )}
-            <div className="form-field" style={{ marginTop: 14 }}>
-              <label htmlFor="replace-today">Replace current exercise for today</label>
-              <select
-                id="replace-today"
-                className="select"
-                value={ex.exerciseId}
-                onChange={(e) => replaceToday(e.target.value)}
-              >
-                {allExercises(data).map((item: Exercise) => (
-                  <option key={item.id} value={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </details>
+          <WorkoutOptions
+            key={ex.id}
+            exercise={ex}
+            library={allExercises(data)}
+            onAddSet={(kind) =>
+              mutate(
+                (d: AppData) => addWorkoutSet(d, workout.id, ex.id, kind),
+                kind === 'warmup' ? 'Warm-up set added' : 'Set added',
+              )
+            }
+            onReplace={replaceToday}
+            onEditSet={(set, loadMode) => editSet(ex.id, set, { loadMode })}
+            visibility={
+              <WorkoutVisibilityControl
+                session={session}
+                workout={workout}
+                synced={syncStatus === 'synced'}
+                onLocalChange={saveVisibility}
+              />
+            }
+          />
         </>
       ) : (
         <div className="empty-state">
