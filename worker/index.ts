@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z } from 'zod';
 import { verifiedIdentity, legacySubjectKey } from './auth';
-import { coachReply, providers } from './coach';
+import { CoachError, coachReply, providers } from './coach';
 import type { ProviderEnv } from './coach';
 import { emptyData, validateBackup } from '../shared/domain';
 import { catalog } from '../shared/catalog';
@@ -945,7 +945,7 @@ app.post('/api/coach/chat', async (c) => {
     .object({
       message: z.string().trim().min(1).max(4000),
       provider: z.enum(['openai', 'anthropic']),
-      model: z.string().min(1).max(100),
+      model: z.string().trim().max(100).optional(),
       context: z
         .object({
           routineId: z.string().optional(),
@@ -975,6 +975,8 @@ app.post('/api/coach/chat', async (c) => {
 });
 app.notFound((c) => c.json({ error: 'Unknown API endpoint.' }, 404));
 app.onError((error, c) => {
+  if (error instanceof CoachError)
+    return c.json({ error: error.message, code: error.code }, error.status);
   if (
     error instanceof z.ZodError ||
     error instanceof SyntaxError ||

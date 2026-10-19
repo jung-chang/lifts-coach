@@ -40,6 +40,7 @@ import {
   deleteRoutine,
 } from '../shared/domain';
 import { catalog } from '../shared/catalog';
+import { coachSelection } from '../shared/coachSelection';
 import { evidence as evidenceRecords } from '../evidence/records';
 import type {
   AppData,
@@ -467,6 +468,13 @@ function App() {
       return;
     }
     const message = chatText.trim();
+    const selection = coachSelection(availableProviders, data.settings);
+    if (!selection) {
+      setChatError(
+        'No Coach provider is available yet. Configure a provider on the server to enable chat.',
+      );
+      return;
+    }
     const accountId = currentAccount.current;
     const controller = new AbortController();
     coachRequest.current = controller;
@@ -493,15 +501,10 @@ function App() {
         body: JSON.stringify({
           message,
           context,
-          provider: data.settings.provider,
-          model: data.settings.model,
+          ...selection,
         }),
       });
       if (!response.ok) {
-        if (response.status === 404 || response.status === 503)
-          throw new Error(
-            'No Coach provider is available yet. Configure a provider on the server to enable chat.',
-          );
         const body = (await response.json().catch(() => ({ error: undefined }))) as {
           error?: string;
         };
@@ -650,8 +653,9 @@ function App() {
       settings: {
         ...d.settings,
         unit: profileDraft.unit,
-        provider: profileDraft.provider,
-        model: profileDraft.model,
+        provider: (coachSelection(availableProviders, profileDraft)?.provider ||
+          profileDraft.provider) as AppData['settings']['provider'],
+        model: coachSelection(availableProviders, profileDraft)?.model || profileDraft.model,
         profile: profileDraft.profile,
         increments: profileDraft.increments,
       },
@@ -1579,7 +1583,7 @@ function App() {
                       <label>Provider</label>
                       <select
                         className="select"
-                        value={profileDraft.provider}
+                        value={coachSelection(availableProviders, profileDraft)?.provider || ''}
                         onChange={(e) => {
                           const models =
                             availableProviders.find((p) => p.id === e.target.value)?.models || [];
@@ -1605,14 +1609,20 @@ function App() {
                       <label>Model</label>
                       <select
                         className="select"
-                        value={profileDraft.model}
+                        value={coachSelection(availableProviders, profileDraft)?.model || ''}
                         onChange={(e) =>
-                          setProfileDraft({ ...profileDraft, model: e.target.value })
+                          setProfileDraft({
+                            ...profileDraft,
+                            ...coachSelection(availableProviders, profileDraft),
+                            model: e.target.value,
+                          })
                         }
                       >
                         {(
-                          availableProviders.find((p) => p.id === profileDraft.provider)?.models ||
-                          []
+                          availableProviders.find(
+                            (p) =>
+                              p.id === coachSelection(availableProviders, profileDraft)?.provider,
+                          )?.models || []
                         ).map((model) => (
                           <option key={model} value={model}>
                             {model}

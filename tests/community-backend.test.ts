@@ -156,6 +156,25 @@ function finishedData() {
 }
 
 describe('community backend authorization and publication', () => {
+  it('accepts a blank Coach model for server defaulting and distinguishes unavailable providers', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1();
+    try {
+      const token = await auth('enabled@example.test', 'coach-model-default');
+      const response = await call(db, token, '/api/coach/chat', 'POST', {
+        message: 'Hello',
+        provider: 'openai',
+        model: '',
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ code: 'provider_selection' });
+    } finally {
+      db.db.close();
+    }
+  });
   it('shares profile trends only while enabled without publishing private workout history', async () => {
     vi.stubGlobal(
       'fetch',
