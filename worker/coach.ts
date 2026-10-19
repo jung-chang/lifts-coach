@@ -203,9 +203,25 @@ export async function coachReply(...args: Parameters<typeof generateCoachReply>)
     return await generateCoachReply(...args);
   } catch (error) {
     if (error instanceof CoachError) throw error;
-    const upstream = error as { name?: string; statusCode?: number };
+    const failure = error as { lastError?: unknown };
+    const upstream = (failure.lastError || error) as {
+      name?: string;
+      statusCode?: number;
+      data?: { error?: { code?: string; param?: string; message?: string } };
+    };
+    const detail = upstream.data?.error;
+    const identifier = (value: unknown) =>
+      typeof value === 'string' && /^[a-zA-Z0-9_.\[\]-]{1,100}$/.test(value) ? value : undefined;
     // Provider exceptions can include headers, prompts and responses. Log only safe diagnostics.
-    console.error('Coach request failed', { name: upstream.name, status: upstream.statusCode });
+    console.error('Coach request failed', {
+      name: identifier(upstream.name),
+      status: upstream.statusCode,
+      code: identifier(detail?.code),
+      parameter: identifier(detail?.param),
+      // This error describes our static response schema, never the user's prompt or an API key.
+      schemaError:
+        detail?.code === 'invalid_json_schema' ? detail.message?.slice(0, 1500) : undefined,
+    });
     if (upstream.statusCode === 401 || upstream.statusCode === 403)
       throw new CoachError(
         'The Coach provider rejected its credentials. Check the Worker provider secret and project access.',
