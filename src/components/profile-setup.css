@@ -1,0 +1,19 @@
+.profile-setup {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+}
+.profile-setup-card {
+  width: 100%;
+  max-width: 440px;
+  display: grid;
+  gap: 20px;
+}
+.profile-setup-card h1,
+.profile-setup-card p {
+  margin: 0;
+}
+.profile-setup-card .form-field {
+  min-width: 0;
+}

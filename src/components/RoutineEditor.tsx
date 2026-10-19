@@ -24,6 +24,7 @@ export function RoutineEditor({
   onBack,
   onSave,
   onAskCoach,
+  canCoach = true,
 }: {
   data: AppData;
   draft: RoutineDraft;
@@ -33,6 +34,7 @@ export function RoutineEditor({
   onBack: () => void;
   onSave: () => void;
   onAskCoach: () => void;
+  canCoach?: boolean;
 }) {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
@@ -191,9 +193,11 @@ export function RoutineEditor({
           <div>
             <h2>Exercises</h2>
           </div>
-          <Button variant="ai" onClick={onAskCoach}>
-            <Sparkles size={16} /> Ask Coach
-          </Button>
+          {canCoach && (
+            <Button variant="ai" onClick={onAskCoach}>
+              <Sparkles size={16} /> Ask Coach
+            </Button>
+          )}
         </div>
         {draft.routine.exercises.length === 0 ? (
           <div className="card card-pad routine-empty-draft">

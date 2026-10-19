@@ -17,6 +17,7 @@ export interface AccountSession {
   accountId: string;
   email: string;
   coachEnabled: boolean;
+  profileSetupRequired?: boolean;
   profile: PublicProfile;
   sharing: SharingSettings;
 }

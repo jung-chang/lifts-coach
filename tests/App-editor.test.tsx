@@ -4,10 +4,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emptyData } from '../shared/domain';
 import App from '../src/App';
 
-const fixture = vi.hoisted(() => ({ update: vi.fn(), data: null as any }));
+const fixture = vi.hoisted(() => ({
+  update: vi.fn(),
+  data: null as any,
+  session: null as any,
+  refreshSession: vi.fn(),
+}));
 vi.mock('../src/lib/store', () => ({
   useAppStore: () => ({
     data: fixture.data,
+    session: fixture.session,
+    identityStatus: 'verified',
+    refreshSession: fixture.refreshSession,
     syncStatus: 'synced',
     update: fixture.update,
     conflict: null,
@@ -21,6 +29,20 @@ vi.mock('../src/lib/store', () => ({
 beforeEach(() => {
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
   fixture.data = emptyData();
+  fixture.session = {
+    accountId: 'synthetic-account',
+    email: 'member@example.test',
+    coachEnabled: true,
+    profileSetupRequired: false,
+    profile: { publicId: 'synthetic-profile', displayName: 'Member', trainingTimezone: 'UTC' },
+    sharing: {
+      summaryEnabled: false,
+      autoPublishWorkouts: false,
+      policyRevision: 1,
+      audienceAcknowledgedAt: null,
+      enabledAt: null,
+    },
+  };
   fixture.update.mockReset();
   fixture.update.mockImplementation(async (updater) => {
     fixture.data = updater(fixture.data);
@@ -47,6 +69,45 @@ function startDraft() {
 }
 
 describe('integrated editor navigation', () => {
+  it('shows profile setup before training for a newly verified account', () => {
+    fixture.session.profileSetupRequired = true;
+    render(<App />);
+    expect(screen.getByRole('heading', { name: 'Your profile' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Create routine' })).toBeNull();
+  });
+  it('hides Coach controls for members while allowing manual routine creation', () => {
+    fixture.session.coachEnabled = false;
+    render(<App />);
+    expect(screen.queryByRole('button', { name: /Ask Coach/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Create routine' }));
+    expect(screen.getByLabelText('Routine name')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Ask Coach/ })).toBeNull();
+  });
+  it('offers explicit private-by-default sharing after a member finishes a workout', async () => {
+    fixture.session.coachEnabled = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url) =>
+        Response.json(
+          String(url).endsWith('/visibility') ? { visibility: 'private', decisionRevision: 0 } : [],
+        ),
+      ),
+    );
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Use starter routine' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Start workout' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Set 1 done' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish workout' }));
+    const summary = await screen.findByRole('dialog', { name: 'Workout saved' });
+    expect(within(summary).getByText('Only me')).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        (within(summary).getByRole('button', { name: 'Share workout' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(false),
+    );
+    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false);
+  });
   it('opens routine creation directly with the new title field focused', () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: 'Create routine' }));

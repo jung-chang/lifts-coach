@@ -135,6 +135,8 @@ const validResponse = (path: string, value: unknown) => {
       typeof value.accountId === 'string' &&
       typeof value.email === 'string' &&
       typeof value.coachEnabled === 'boolean' &&
+      (value.profileSetupRequired === undefined ||
+        typeof value.profileSetupRequired === 'boolean') &&
       isProfile(value.profile) &&
       isRecord(value.sharing) &&
       typeof value.sharing.summaryEnabled === 'boolean' &&

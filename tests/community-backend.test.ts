@@ -14,6 +14,7 @@ class TestD1 {
       '0002_state_chunks.sql',
       '0003_account_isolation.sql',
       '0004_accounts_community.sql',
+      '0005_profile_setup.sql',
     ])
       this.db.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
   }
@@ -156,6 +157,47 @@ function finishedData() {
 }
 
 describe('community backend authorization and publication', () => {
+  it('sets up each new profile once without sharing training or changing another account', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1();
+    try {
+      const first = await auth('first@example.test', 'setup-first');
+      const second = await auth('second@example.test', 'setup-second');
+      const before = (await (await call(db, first, '/api/session')).json()) as any;
+      expect(before.profileSetupRequired).toBe(true);
+      const invalid = await call(db, first, '/api/me/profile', 'PATCH', {
+        displayName: 'Friend',
+        trainingTimezone: 'Invalid/Zone',
+      });
+      expect(invalid.status).toBe(400);
+      expect(
+        ((await (await call(db, first, '/api/session')).json()) as any).profileSetupRequired,
+      ).toBe(true);
+      const saved = (await (
+        await call(db, first, '/api/me/profile', 'PATCH', {
+          displayName: 'Friend',
+          trainingTimezone: 'America/New_York',
+        })
+      ).json()) as any;
+      expect(saved).toMatchObject({
+        profileSetupRequired: false,
+        profile: { displayName: 'Friend', trainingTimezone: 'America/New_York' },
+        sharing: { summaryEnabled: false, autoPublishWorkouts: false },
+      });
+      expect(
+        ((await (await call(db, first, '/api/session')).json()) as any).profileSetupRequired,
+      ).toBe(false);
+      const other = (await (await call(db, second, '/api/session')).json()) as any;
+      expect(other.accountId).not.toBe(saved.accountId);
+      expect(other.profileSetupRequired).toBe(true);
+      expect(other.profile.displayName).not.toBe('Friend');
+    } finally {
+      db.db.close();
+    }
+  });
   it('accepts a blank Coach model for server defaulting and distinguishes unavailable providers', async () => {
     vi.stubGlobal(
       'fetch',

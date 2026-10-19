@@ -47,6 +47,40 @@ afterEach(() => {
 });
 
 describe('account and community schema migration', () => {
+  it('preserves existing profiles when adding first-login setup', () => {
+    const db = migrated();
+    db.prepare('INSERT INTO accounts VALUES (?,?,?,?,?,?,?,?,?)').run(
+      'existing',
+      'existing@example.test',
+      'existing@example.test',
+      'https://issuer.test',
+      'existing-sub',
+      'active',
+      0,
+      'created',
+      'updated',
+    );
+    db.prepare('INSERT INTO profiles VALUES (?,?,?,?,?,?)').run(
+      'existing',
+      'existing-public',
+      'Existing member',
+      'America/New_York',
+      'created',
+      'updated',
+    );
+    db.exec(sql('../migrations/0005_profile_setup.sql'));
+    expect(
+      db
+        .prepare(
+          'SELECT display_name,training_timezone,setup_completed_at FROM profiles WHERE account_id=?',
+        )
+        .get('existing'),
+    ).toEqual({
+      display_name: 'Existing member',
+      training_timezone: 'America/New_York',
+      setup_completed_at: 'updated',
+    });
+  });
   it('preserves legacy hashed-owner state, chunks, receipts, and request rows for verified mapping', () => {
     const db = migrated();
     expect(db.prepare('SELECT id,payload,revision FROM legacy_account_state').get()).toEqual({

@@ -190,7 +190,7 @@ async function readState(env: Env, accountId: string) {
 }
 async function getSession(env: Env, accountId: string) {
   const row = await env.DB.prepare(
-    `SELECT a.id accountId,a.email,a.coach_enabled coachEnabled,p.public_id publicId,p.display_name displayName,p.training_timezone trainingTimezone,s.summary_enabled summaryEnabled,s.auto_publish_workouts autoPublishWorkouts,s.policy_revision policyRevision,s.audience_acknowledged_at audienceAcknowledgedAt,s.workout_sharing_enabled_at enabledAt FROM accounts a JOIN profiles p ON p.account_id=a.id JOIN sharing_settings s ON s.account_id=a.id WHERE a.id=? AND a.status='active'`,
+    `SELECT a.id accountId,a.email,a.coach_enabled coachEnabled,p.setup_completed_at setupCompletedAt,p.public_id publicId,p.display_name displayName,p.training_timezone trainingTimezone,s.summary_enabled summaryEnabled,s.auto_publish_workouts autoPublishWorkouts,s.policy_revision policyRevision,s.audience_acknowledged_at audienceAcknowledgedAt,s.workout_sharing_enabled_at enabledAt FROM accounts a JOIN profiles p ON p.account_id=a.id JOIN sharing_settings s ON s.account_id=a.id WHERE a.id=? AND a.status='active'`,
   )
     .bind(accountId)
     .first<Record<string, any>>();
@@ -199,6 +199,7 @@ async function getSession(env: Env, accountId: string) {
     accountId: row.accountId,
     email: row.email,
     coachEnabled: !!row.coachEnabled,
+    profileSetupRequired: !row.setupCompletedAt,
     profile: {
       publicId: row.publicId,
       displayName: row.displayName,
@@ -411,9 +412,15 @@ app.patch('/api/me/profile', async (c) => {
     return c.json({ error: 'Invalid training timezone.' }, 400);
   }
   await c.env.DB.prepare(
-    'UPDATE profiles SET display_name=?,training_timezone=?,updated_at=? WHERE account_id=?',
+    'UPDATE profiles SET display_name=?,training_timezone=?,updated_at=?,setup_completed_at=COALESCE(setup_completed_at,?) WHERE account_id=?',
   )
-    .bind(body.displayName, body.trainingTimezone, new Date().toISOString(), c.get('accountId'))
+    .bind(
+      body.displayName,
+      body.trainingTimezone,
+      new Date().toISOString(),
+      new Date().toISOString(),
+      c.get('accountId'),
+    )
     .run();
   return c.json(await getSession(c.env, c.get('accountId')));
 });

@@ -97,6 +97,14 @@ Settings exports a complete schema-versioned JSON backup of routines, custom exe
 
 ## PWA and privacy
 
+### Inviting community members
+
+Add each approved email to the **lifts.coach Cloudflare Access application's Allow policy**. Keep admission restricted to those emails; a rule allowing the one-time-PIN login method by itself allows any email. Keep the invite list in Cloudflare, never in this public repository. Members visit the app and verify the email code; they do not need a Cloudflare account or an AI provider key.
+
+The first verified request provisions one account and one profile. New members choose a display name and confirm their device-detected timezone before training. Routines, workouts, chats and local sync queues belong to that account. Workouts and profile stats start private and are shared independently. Coach remains restricted to the verified email configured by the private Worker secret; other members can train and use Community without it.
+
+Before a broader rollout, verify a real second email through Access: finish profile setup, start and finish a starter workout, reload on the same account, and confirm the other account's private data stays unavailable. Local multi-account tests cover application isolation, but do not validate the deployed Access policy or email delivery.
+
 See [production readiness](docs/production-readiness.md) for the matching favicon,
 Apple/Android install assets, update behavior, and the release gates for the
 owner's expanded plan to support other users on both phone platforms.

@@ -8,6 +8,23 @@ const fixture = vi.hoisted(() => ({ data: null as any, update: vi.fn() }));
 vi.mock('../src/lib/store', () => ({
   useAppStore: () => ({
     data: fixture.data,
+    session: {
+      accountId: 'synthetic-coach',
+      email: 'coach@example.test',
+      coachEnabled: true,
+      profile: {
+        publicId: 'synthetic-profile',
+        displayName: 'Coach member',
+        trainingTimezone: 'UTC',
+      },
+      sharing: {
+        summaryEnabled: false,
+        autoPublishWorkouts: false,
+        policyRevision: 1,
+        audienceAcknowledgedAt: null,
+        enabledAt: null,
+      },
+    },
     update: fixture.update,
     syncStatus: 'synced',
     conflict: null,

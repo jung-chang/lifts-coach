@@ -58,6 +58,7 @@ import { Sheet as Dialog } from './components/ui/Sheet';
 import { ProposalCard } from './components/ProposalCard';
 import { Sheet } from './components/ui/Sheet';
 import { RoutineEditor } from './components/RoutineEditor';
+import { ProfileSetup } from './components/ProfileSetup';
 import { SetTable } from './components/SetTable';
 import { WorkoutOptions } from './components/WorkoutOptions';
 import { SearchPicker } from './components/SearchPicker';
@@ -136,6 +137,7 @@ function App() {
   const store = useAppStore();
   const data = store.data;
   const session = store.session ?? null;
+  const canCoach = session?.coachEnabled ?? false;
   const [tab, setTab] = useState<Tab>('train');
   const [progressView, setProgressView] = useState<'overview' | 'stats' | 'history'>('overview');
   const [profileView, setProfileView] = useState<'overview' | 'stats' | 'history'>('overview');
@@ -233,6 +235,10 @@ function App() {
       setCurrentEx(0);
     }
   }, [active?.id]);
+  useEffect(() => {
+    if (!canCoach && tab === 'coach') setTab('train');
+    if (!canCoach && settingsTab === 'coach') setSettingsTab('general');
+  }, [canCoach, tab, settingsTab]);
   useEffect(() => {
     const t = setInterval(() => setTimerNow(Date.now()), 1000);
     return () => clearInterval(t);
@@ -444,13 +450,14 @@ function App() {
     }
   };
   const openCoach = (ctx: typeof context = {}, sheet = false) => {
+    if (!canCoach) return;
     setContext(ctx);
     setModal(sheet ? 'coach-sheet' : '');
     if (!sheet) setTab('coach');
   };
   const submitChat = async () => {
     if (!data || !chatText.trim() || chatBusy) return;
-    if (session && !session.coachEnabled) {
+    if (!canCoach) {
       setChatError(
         'Coach is not enabled for this account. Your training and community remain available.',
       );
@@ -617,7 +624,7 @@ function App() {
         setModal('summary');
         say(
           suggestions.length
-            ? 'A progression suggestion is ready to review in Coach.'
+            ? 'A progression suggestion is ready in Progress → Exercise stats.'
             : 'Workout saved. Nice work.',
         );
       }
@@ -788,6 +795,16 @@ function App() {
         </main>
       </div>
     );
+  if (session?.profileSetupRequired && store.identityStatus === 'verified')
+    return (
+      <ProfileSetup
+        key={session.accountId}
+        session={session}
+        onComplete={async () => {
+          await store.refreshSession?.();
+        }}
+      />
+    );
   const viewedWorkout =
     !!workout && workout.status === 'active' && tab === 'train' && !editorVisible;
   const showMini = !!active && (tab !== 'train' || editorVisible);
@@ -823,9 +840,16 @@ function App() {
                         ? 'Sync issue'
                         : 'Synced'}
             </span>
-            <Button variant="ghost" size="icon" aria-label="Ask Coach" onClick={() => openCoach()}>
-              <Sparkles size={19} />
-            </Button>
+            {canCoach && (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Ask Coach"
+                onClick={() => openCoach()}
+              >
+                <Sparkles size={19} />
+              </Button>
+            )}
             <Button
               className="profile-avatar-button"
               variant="ghost"
@@ -856,6 +880,7 @@ function App() {
           setName={setEditorName}
           onBack={requestEditorExit}
           onSave={saveRoutine}
+          canCoach={canCoach}
           onAskCoach={() => {
             setContext({});
             setChatText(
@@ -1056,6 +1081,7 @@ function App() {
                       true,
                     )
                   }
+                  canCoach={canCoach}
                   setUndo={undoLast}
                   undo={undo}
                   say={say}
@@ -1094,6 +1120,7 @@ function App() {
               view={progressView}
               setView={setProgressView}
               onWorkout={openOwnWorkout}
+              canCoach={canCoach}
               onCoach={() => openCoach()}
               onRepeat={repeat}
               onCorrection={(w: Workout, e: WorkoutExercise) =>
@@ -1108,7 +1135,7 @@ function App() {
               reject={(p: Proposal) => mutate((d) => rejectProposal(d, p.id))}
             />
           )}
-          {tab === 'coach' && (
+          {tab === 'coach' && canCoach && (
             <CoachScreen
               data={data}
               syncStatus={status}
@@ -1270,12 +1297,14 @@ function App() {
             </button>
           ))}
           <div className="sidebar-account">
-            <button
-              className={`sidebar-coach${tab === 'coach' ? ' active' : ''}`}
-              onClick={() => openCoach()}
-            >
-              <Sparkles size={18} /> Ask Coach
-            </button>
+            {canCoach && (
+              <button
+                className={`sidebar-coach${tab === 'coach' ? ' active' : ''}`}
+                onClick={() => openCoach()}
+              >
+                <Sparkles size={18} /> Ask Coach
+              </button>
+            )}
             <button
               className="sidebar-profile"
               onClick={() => {
@@ -1467,17 +1496,19 @@ function App() {
         {profileDraft && (
           <div className="stack">
             <div className="settings-tabs" role="tablist" aria-label="Settings sections">
-              {(['general', 'profile', 'coach'] as const).map((key) => (
-                <button
-                  key={key}
-                  role="tab"
-                  aria-selected={settingsTab === key}
-                  className={`settings-tab${settingsTab === key ? ' active' : ''}`}
-                  onClick={() => setSettingsTab(key)}
-                >
-                  {key === 'general' ? 'General' : key === 'profile' ? 'Profile' : 'Coach'}
-                </button>
-              ))}
+              {(['general', 'profile', ...(canCoach ? (['coach'] as const) : [])] as const).map(
+                (key) => (
+                  <button
+                    key={key}
+                    role="tab"
+                    aria-selected={settingsTab === key}
+                    className={`settings-tab${settingsTab === key ? ' active' : ''}`}
+                    onClick={() => setSettingsTab(key)}
+                  >
+                    {key === 'general' ? 'General' : key === 'profile' ? 'Profile' : 'Coach'}
+                  </button>
+                ),
+              )}
             </div>
             {settingsTab === 'general' && (
               <section className="settings-tab-panel" role="tabpanel">
@@ -1566,7 +1597,7 @@ function App() {
                 </div>
               </section>
             )}
-            {settingsTab === 'coach' && (
+            {settingsTab === 'coach' && canCoach && (
               <section className="settings-tab-panel" role="tabpanel">
                 <b>Coach provider</b>
                 {availableProviders.length ? (
@@ -1660,6 +1691,14 @@ function App() {
               <div className="muted small">Your completed sets are now in history.</div>
             </div>
           </div>
+          {session && summaryWorkout && (
+            <WorkoutVisibilityControl
+              session={session}
+              workout={summaryWorkout}
+              synced={status === 'synced'}
+              onLocalChange={async () => false}
+            />
+          )}
           <div className="form-field">
             <label>
               How did it feel? <span className="muted">(optional)</span>
@@ -1770,28 +1809,32 @@ function App() {
           </div>
         )}
       </Dialog>
-      <Dialog
-        open={modal === 'coach-sheet'}
-        onOpenChange={(o) => !o && setModal('')}
-        title="Coach"
-        description={editorVisible ? 'Routine draft context included' : 'Workout context included'}
-      >
-        <CoachScreen
-          data={data}
-          syncStatus={status}
-          chatText={chatText}
-          setChatText={setChatText}
-          submit={submitChat}
-          busy={chatBusy}
-          error={chatError}
-          proposals={data.proposals.filter((p: Proposal) => p.status === 'pending')}
-          selection={proposalSelection}
-          setSelection={setProposalSelection}
-          apply={applyPending}
-          reject={(p: Proposal) => mutate((d) => rejectProposal(d, p.id))}
-          openRoutine={openRoutine}
-        />
-      </Dialog>
+      {canCoach && (
+        <Dialog
+          open={modal === 'coach-sheet'}
+          onOpenChange={(o) => !o && setModal('')}
+          title="Coach"
+          description={
+            editorVisible ? 'Routine draft context included' : 'Workout context included'
+          }
+        >
+          <CoachScreen
+            data={data}
+            syncStatus={status}
+            chatText={chatText}
+            setChatText={setChatText}
+            submit={submitChat}
+            busy={chatBusy}
+            error={chatError}
+            proposals={data.proposals.filter((p: Proposal) => p.status === 'pending')}
+            selection={proposalSelection}
+            setSelection={setProposalSelection}
+            apply={applyPending}
+            reject={(p: Proposal) => mutate((d) => rejectProposal(d, p.id))}
+            openRoutine={openRoutine}
+          />
+        </Dialog>
+      )}
     </div>
   );
 }
@@ -1809,6 +1852,7 @@ function WorkoutScreen({
   finish,
   requestDiscard,
   onCoach,
+  canCoach = true,
   setUndo,
   undo,
   say,
@@ -1845,15 +1889,17 @@ function WorkoutScreen({
           <h1>{workout.name}</h1>
         </div>
         <div className="row">
-          <Button
-            variant="ai"
-            size="sm"
-            aria-label="Ask Coach about this workout"
-            onClick={onCoach}
-          >
-            <Sparkles size={16} />
-            <span className="desktop-only">Coach</span>
-          </Button>
+          {canCoach && (
+            <Button
+              variant="ai"
+              size="sm"
+              aria-label="Ask Coach about this workout"
+              onClick={onCoach}
+            >
+              <Sparkles size={16} />
+              <span className="desktop-only">Coach</span>
+            </Button>
+          )}
           <div className="row workout-completion-actions">
             <Button variant="primary" onClick={finish}>
               Finish workout
@@ -2010,6 +2056,7 @@ function ProgressScreen({
   setView,
   onWorkout,
   onCoach,
+  canCoach = true,
   onRepeat,
   proposals,
   selection,
@@ -2053,9 +2100,11 @@ function ProgressScreen({
                 : 'Workout history'}
           </h1>
         </div>
-        <Button variant="ai" onClick={onCoach}>
-          <Sparkles size={16} /> Ask Coach
-        </Button>
+        {canCoach && (
+          <Button variant="ai" onClick={onCoach}>
+            <Sparkles size={16} /> Ask Coach
+          </Button>
+        )}
       </div>
       {view === 'overview' && (
         <>

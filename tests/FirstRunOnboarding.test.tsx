@@ -16,7 +16,7 @@ describe('FirstRunOnboarding', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Create routine' }));
     fireEvent.click(screen.getByRole('button', { name: 'Import backup' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Try sample routine' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use starter routine' }));
 
     expect(actions.onCreateRoutine).toHaveBeenCalledOnce();
     expect(actions.onImportBackup).toHaveBeenCalledOnce();
