@@ -47,6 +47,7 @@ function mockOpenAI(reply: unknown) {
 
 function assertStrictSchema(node: any) {
   if (!node || typeof node !== 'object') return;
+  expect(node.oneOf).toBeUndefined();
   if (node.type === 'object') {
     expect(node.additionalProperties).toBe(false);
     expect([...(node.required || [])].sort()).toEqual(Object.keys(node.properties).sort());

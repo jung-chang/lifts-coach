@@ -44,7 +44,8 @@ const range = z
   .length(2)
   .transform((values) => values as [number, number])
   .refine(([a, b]) => a <= b);
-const edit = z.discriminatedUnion('op', [
+// OpenAI strict structured outputs support nested anyOf, but reject oneOf.
+const edit = z.union([
   z.object({
     op: z.literal('replace_exercise'),
     exerciseId: z.string(),
