@@ -1,4 +1,5 @@
 import type { LoadMode } from './types';
+import type { ExerciseStat } from './trainingStats';
 
 export interface PublicProfile {
   publicId: string;
@@ -66,6 +67,9 @@ export interface ProfileDetail {
     date: string;
   }[];
   workouts: FeedItem[];
+  exerciseStats?: ExerciseStat[];
+  statsVisible?: boolean;
+  nextWorkoutCursor?: string | null;
 }
 export interface WorkoutVisibility {
   visibility: 'private' | 'community';

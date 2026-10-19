@@ -26,7 +26,7 @@ On a phone, everything fits one readable column. Desktop uses the same list at a
 
 ## Profiles and workout detail
 
-Each community profile shows its display name, shared weekly volume, qualified lift records, and a short recent shared-workout list. Compare opens the existing two-person volume/lift view. Private or unavailable sections use a short explanation; do not fill them with zeroes. People searches display names only and does not expose sign-in emails or authentication identifiers.
+Each community profile shows its display name and the same Exercise stats and Workout history components used in Progress, scoped to that person. Shared workout history supports pagination. Compare retains the two-person volume/lift view when profile stats are shared. Private stats use a short explanation; do not fill them with zeroes. People searches display names only and does not expose sign-in emails or authentication identifiers.
 
 Shared workout detail shows owner, approved or neutral title, completion date, duration where available, and exercises with actual completed sets/load/reps. All exercise set tables are fully expanded; there are no accordions. Distinguish per-dumbbell, bodyweight and assistance modes. It is read-only for other people. The owner's private history summary provides explicit set corrections. Personal notes, feeling, coaching preferences, chats, measurements and meals remain private.
 
@@ -38,7 +38,7 @@ Recommended sharing default for a new member: future finished workouts appear au
 
 Existing accounts and old workouts remain private until the owner of that account reviews/enables sharing. Enabling automatic sharing applies from that moment onward, not retroactively to all history. Old workouts can be shared individually from history. Disabling automatic sharing affects future workouts; provide a separate explicit “Hide all shared workouts” action for existing publications. A workout remains locally saved even if publication fails.
 
-Keep all-history summary/record sharing a separate opt-in: a member may publish workouts while withholding broader history summaries. Where summary access is disabled, offer totals/records from shared workouts only with that scope labeled. Full-history summaries may include individually private sessions only when that broader permission has been explicitly enabled. Hiding a workout therefore does not remove its contribution from an enabled all-history summary; make that relationship visible in the setting.
+Keep profile stats sharing separate from workout sharing. The profile has one switch: off hides aggregate stats, lift records and comparisons from other members; individually shared workouts remain readable. On shares all-history exercise trends and records, including contributions from private workouts, with that scope stated beside the switch. Hiding an individual workout does not remove its contribution from enabled all-history stats. Name editing uses a pencil action; timezone, automatic workout sharing and account controls live behind Settings.
 
 Block is available through profile Options. It prevents both people from reading one another's feed items, profiles, workout details and comparisons. Blocking is an access rule on every relevant endpoint, not just a feed filter. It does not make either person's records private to everyone else. Do not publish block lists or provide block-specific lookup errors. Membership does not authorize sending another person's training to Coach.
 

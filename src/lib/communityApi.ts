@@ -39,7 +39,10 @@ const isFeedItem = (value: unknown) =>
   value.exerciseNames.every((name) => typeof name === 'string');
 const validResponse = (path: string, value: unknown) => {
   if (path.includes('/community/profiles/') && path.includes('/block')) return isRecord(value);
-  if (path.includes('/community/feed'))
+  if (
+    path.includes('/community/feed') ||
+    /\/community\/profiles\/[^/]+\/workouts(?:\?|$)/.test(path)
+  )
     return (
       isRecord(value) &&
       Array.isArray(value.items) &&
@@ -74,7 +77,29 @@ const validResponse = (path: string, value: unknown) => {
           Number.isFinite(Date.parse(r.date)),
       ) &&
       Array.isArray(value.workouts) &&
-      value.workouts.every(isFeedItem)
+      value.workouts.every(isFeedItem) &&
+      (value.statsVisible === undefined || typeof value.statsVisible === 'boolean') &&
+      (value.nextWorkoutCursor === undefined ||
+        value.nextWorkoutCursor === null ||
+        typeof value.nextWorkoutCursor === 'string') &&
+      (value.exerciseStats === undefined ||
+        (Array.isArray(value.exerciseStats) &&
+          value.exerciseStats.every(
+            (s) =>
+              isRecord(s) &&
+              typeof s.exerciseId === 'string' &&
+              typeof s.name === 'string' &&
+              isMode(s.loadMode) &&
+              Array.isArray(s.points) &&
+              s.points.every(
+                (p) =>
+                  isRecord(p) &&
+                  typeof p.date === 'string' &&
+                  Number.isFinite(Date.parse(p.date)) &&
+                  Number.isFinite(p.weight) &&
+                  Number.isFinite(p.reps),
+              ),
+          )))
     );
   if (path.includes('/community/workouts/'))
     return (
@@ -168,6 +193,17 @@ export const getWorkout = (accountId: string, publicationId: string, signal?: Ab
   });
 export const getSession = (accountId: string, signal?: AbortSignal) =>
   json<AccountSession>('/api/session', accountId, { signal });
+export const getProfileWorkouts = (
+  accountId: string,
+  publicId: string,
+  cursor: string,
+  signal?: AbortSignal,
+) =>
+  json<FeedPage>(
+    `/api/community/profiles/${encodeURIComponent(publicId)}/workouts?cursor=${encodeURIComponent(cursor)}`,
+    accountId,
+    { signal },
+  );
 export const patchProfile = (
   accountId: string,
   body: { displayName: string; trainingTimezone: string },

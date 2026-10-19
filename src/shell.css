@@ -264,10 +264,8 @@
   }
   .app-shell > .bottom-nav {
     position: fixed;
-    top: auto;
-    bottom: 0;
-    left: 0;
-    right: 0;
+    inset: auto 0 0;
+    margin: 0;
     transform: none;
     width: 100%;
     max-width: none;

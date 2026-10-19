@@ -1333,7 +1333,6 @@ summary {
     background: rgba(245, 245, 242, 0.96);
     backdrop-filter: blur(12px);
   }
-  .bottom-nav,
   .nav {
     position: fixed;
     top: 12px;

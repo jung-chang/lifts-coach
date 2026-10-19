@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   ArrowLeft,
@@ -66,6 +66,13 @@ import { formatLoadValue } from './components/LoadSemantics';
 import { SyncDetails } from './components/SyncDetails';
 import { CommunityScreen, OwnProfileScreen } from './components/CommunityScreen';
 import { WorkoutSummary } from './components/WorkoutSummary';
+import {
+  ExerciseStats,
+  WorkoutHistory,
+  TrainingLinks,
+  historyItemsFromWorkouts,
+} from './components/TrainingHistory';
+import { exerciseStatsFromWorkouts } from '../shared/trainingStats';
 import { WorkoutVisibilityControl } from './components/WorkoutVisibilityControl';
 import type { AccountSession } from '../shared/community';
 import { mondayOfDate, recentMondayDates, trainingDateAt } from '../shared/trainingDates';
@@ -131,6 +138,7 @@ function App() {
   const session = store.session ?? null;
   const [tab, setTab] = useState<Tab>('train');
   const [progressView, setProgressView] = useState<'overview' | 'stats' | 'history'>('overview');
+  const [profileView, setProfileView] = useState<'overview' | 'stats' | 'history'>('overview');
   const [ownWorkoutId, setOwnWorkoutId] = useState<string | null>(null);
   const [ownWorkoutReturn, setOwnWorkoutReturn] = useState<Tab>('progress');
   const [legacyClaimRequested, setLegacyClaimRequested] = useState(false);
@@ -201,6 +209,7 @@ function App() {
     setEditorVisible(false);
     setWorkoutId(null);
     setOwnWorkoutId(null);
+    setProfileView('overview');
     setCorrection(null);
     setUndo(null);
     setContext({});
@@ -819,7 +828,10 @@ function App() {
               variant="ghost"
               size="icon"
               aria-label="Your profile"
-              onClick={() => setTab('profile')}
+              onClick={() => {
+                setProfileView('overview');
+                setTab('profile');
+              }}
             >
               {session?.profile.displayName?.trim() ? (
                 <span aria-hidden="true">
@@ -1131,6 +1143,9 @@ function App() {
           )}
           {tab === 'profile' && (
             <OwnProfileScreen
+              onRepeat={repeat}
+              initialView={profileView}
+              onViewChange={setProfileView}
               onWorkout={openOwnWorkout}
               key={session?.accountId ?? 'local'}
               session={session}
@@ -1267,7 +1282,13 @@ function App() {
             >
               <Sparkles size={18} /> Ask Coach
             </button>
-            <button className="sidebar-profile" onClick={() => setTab('profile')}>
+            <button
+              className="sidebar-profile"
+              onClick={() => {
+                setProfileView('overview');
+                setTab('profile');
+              }}
+            >
               <UserRound size={21} />
               <span>
                 {session?.profile.displayName || 'Your profile'}
@@ -2106,68 +2127,31 @@ function ProgressScreen({
   onWorkout,
   onCoach,
   onRepeat,
-  onCorrection,
   proposals,
   selection,
   setSelection,
   apply,
   reject,
 }: any) {
-  const [exerciseId, setExerciseId] = useState('');
   const openView = (next: 'overview' | 'stats' | 'history') => {
     setView(next);
     window.scrollTo({ top: 0 });
   };
-  const finished = (data.workouts as Workout[])
-    .filter((w) => w.status === 'finished')
-    .slice()
-    .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
-  const byExercise = new Map<
-    string,
-    { name: string; points: { date: string; weight: number; reps: number }[] }
-  >();
-  finished
-    .slice()
-    .reverse()
-    .forEach((w: Workout) =>
-      w.exercises.forEach((e) => {
-        const sets = e.actualSets.filter((s) => s.status === 'completed' && s.kind === 'working');
-        if (!sets.length) return;
-        const best = sets.reduce((a, b) => (b.weight * b.reps > a.weight * a.reps ? b : a));
-        const item = byExercise.get(e.exerciseId) || { name: e.name, points: [] };
-        item.points.push({ date: w.startedAt, weight: best.weight, reps: best.reps });
-        byExercise.set(e.exerciseId, item);
-      }),
-    );
-  const entries = [...byExercise.entries()].sort((a, b) => b[1].points.length - a[1].points.length);
-  const selected = byExercise.get(exerciseId) || entries[0]?.[1];
-  const selectedId = byExercise.has(exerciseId) ? exerciseId : entries[0]?.[0];
-  const loadMode = allExercises(data).find((x) => x.id === selectedId)?.loadMode;
-  const repsOnly = loadMode === 'assistance' || loadMode === 'bodyweight';
-  const weeks = recentMondayDates(timezone).map((start) => {
-    const count = finished
+  const finished = (data.workouts as Workout[]).filter((w) => w.status === 'finished');
+  const stats = useMemo(() => exerciseStatsFromWorkouts(data.workouts), [data.workouts]);
+  const history = useMemo(() => historyItemsFromWorkouts(data.workouts), [data.workouts]);
+  const weeks = recentMondayDates(timezone).map((start) => ({
+    label: `${Number(start.slice(5, 7))}/${Number(start.slice(8, 10))}`,
+    count: finished
       .filter(
-        (w: Workout) =>
+        (w) =>
           mondayOfDate(
             w.trainingDate ?? trainingDateAt(w.startedAt, w.trainingTimezone ?? timezone),
           ) === start,
       )
-      .reduce(
-        (total, workout) =>
-          total +
-          workout.exercises.reduce(
-            (sets, exercise) =>
-              sets +
-              exercise.actualSets.filter(
-                (set) => set.status === 'completed' && set.kind === 'working',
-              ).length,
-            0,
-          ),
-        0,
-      );
-    return { label: `${Number(start.slice(5, 7))}/${Number(start.slice(8, 10))}`, count };
-  });
-  const max = Math.max(1, ...weeks.map((x) => x.count));
+      .reduce((total, w) => total + completedSets(w), 0),
+  }));
+  const max = Math.max(1, ...weeks.map((w) => w.count));
   return (
     <main className="page">
       {view !== 'overview' && (
@@ -2187,210 +2171,85 @@ function ProgressScreen({
           </h1>
         </div>
         <Button variant="ai" onClick={onCoach}>
-          <Sparkles size={16} />
-          Ask Coach
+          <Sparkles size={16} /> Ask Coach
         </Button>
       </div>
-      <div className={view === 'overview' ? 'grid two-col progress-overview' : undefined}>
-        {view === 'overview' && <ProgressCalendar workouts={finished} onWorkout={onWorkout} />}
-        {view === 'stats' && proposals?.length > 0 && (
-          <section className="stack" style={{ marginBottom: 20 }}>
-            <div>
-              <div className="eyebrow">Ready to review</div>
-              <h2 style={{ marginTop: 4 }}>Progression suggestions</h2>
-            </div>
-            {proposals.map((p: Proposal) => (
-              <ProposalCard
-                key={p.id}
-                proposal={p}
-                data={data}
-                selected={
-                  selection[p.id] ??
-                  (p.edits.length ? p.edits.map((_: unknown, i: number) => i) : [0])
-                }
-                setSelected={(v: number[]) => setSelection((s: any) => ({ ...s, [p.id]: v }))}
-                apply={() => apply(p)}
-                reject={() => reject(p)}
-              />
-            ))}
-          </section>
-        )}
-        {view === 'stats' && (
-          <section className="card card-pad">
-            <div className="row space-between">
-              <div>
-                <div className="eyebrow">Strength trend</div>
-                <h2 style={{ marginTop: 4 }}>{selected?.name || 'Exercise progress'}</h2>
-              </div>
-              {selected && (
-                <span className="progress-count muted small">
-                  {selected.points.length} sessions
-                </span>
-              )}
-            </div>
-            {entries.length > 0 && (
-              <div className="form-field" style={{ marginTop: 12 }}>
-                <label htmlFor="progress-exercise">Choose an exercise</label>
-                <select
-                  id="progress-exercise"
-                  className="select"
-                  value={selectedId || ''}
-                  onChange={(e) => setExerciseId(e.target.value)}
-                >
-                  {entries.map(([id, item]) => (
-                    <option key={id} value={id}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
-            {selected && selected.points.length > 1 ? (
-              <>
-                <div
-                  className="chart strength-chart"
-                  role="img"
-                  aria-label={`Progress trend for ${selected.name}`}
-                >
-                  {selected.points.slice(-8).map((p, i, arr) => {
-                    const value = repsOnly ? p.reps : toDisplayWeight(p.weight, data.settings.unit);
-                    const maxValue = Math.max(
-                      1,
-                      ...arr.map((x) =>
-                        repsOnly ? x.reps : toDisplayWeight(x.weight, data.settings.unit),
-                      ),
-                    );
-                    return (
-                      <div className="chart-col" key={p.date}>
-                        <span className="small tabular chart-value">
-                          {value}
-                          {repsOnly ? ' reps' : ''}
-                        </span>
+      {view === 'overview' && (
+        <>
+          <div className="grid two-col progress-overview">
+            <ProgressCalendar workouts={finished} onWorkout={onWorkout} />
+            <section className="card card-pad">
+              <h2>Weekly volume</h2>
+              <p className="muted small">Completed working sets · Monday–Sunday</p>
+              {finished.length ? (
+                <>
+                  <div
+                    className="chart"
+                    role="img"
+                    aria-label={`Completed working sets per week: ${weeks.map((w) => `${w.label}: ${w.count}`).join(', ')}`}
+                  >
+                    {weeks.map((w) => (
+                      <div className="chart-col" key={w.label}>
+                        <span className="small tabular">{w.count}</span>
                         <div
                           className="chart-bar"
-                          style={{ height: `${Math.max(12, (value / maxValue) * 68)}%` }}
+                          style={{
+                            height: `${w.count ? Math.max(8, (w.count / max) * 67) : 2}%`,
+                            opacity: w.count ? 1 : 0.18,
+                          }}
                         />
-                        <span className="chart-label">{dateLabel(p.date)}</span>
+                        <span className="chart-label">{w.label}</span>
                       </div>
-                    );
-                  })}
-                </div>
-                <p className="muted small" style={{ margin: '12px 0 0' }}>
-                  {repsOnly
-                    ? 'Best completed working-set reps · assistance is excluded'
-                    : `Best working-set load · ${loadMode === 'per-dumbbell' ? 'per dumbbell' : 'total load'} in ${data.settings.unit}`}
+                    ))}
+                  </div>
+                  <div className="row space-between" style={{ marginTop: 13 }}>
+                    <span className="muted small">Last 8 weeks · week of</span>
+                    <span className="small">{weeks.at(-1)?.count} sets this week</span>
+                  </div>
+                </>
+              ) : (
+                <p className="progress-empty muted small">
+                  Weekly volume will appear after your first completed workout.
                 </p>
-              </>
-            ) : (
-              <div className="progress-empty">
-                <b>Strength trends will build here</b>
-                <p className="muted small">Complete a few workouts to see how your lifts change.</p>
+              )}
+            </section>
+          </div>
+          <TrainingLinks onStats={() => openView('stats')} onHistory={() => openView('history')} />
+        </>
+      )}
+      {view === 'stats' && (
+        <>
+          {proposals?.length > 0 && (
+            <section className="stack" style={{ marginBottom: 20 }}>
+              <div>
+                <div className="eyebrow">Ready to review</div>
+                <h2 style={{ marginTop: 4 }}>Progression suggestions</h2>
               </div>
-            )}
-          </section>
-        )}
-        {view === 'overview' && (
-          <section className="card card-pad">
-            <h2>Weekly volume</h2>
-            <p className="muted small">Completed working sets · Monday–Sunday</p>
-            {finished.length > 0 ? (
-              <>
-                <div
-                  className="chart"
-                  role="img"
-                  aria-label={`Completed working sets per week: ${weeks.map((week) => `${week.label}: ${week.count}`).join(', ')}`}
-                >
-                  {weeks.map((w, i) => (
-                    <div className="chart-col" key={i}>
-                      <span className="small tabular">{w.count}</span>
-                      <div
-                        className="chart-bar"
-                        style={{
-                          height: `${w.count ? Math.max(8, (w.count / max) * 67) : 2}%`,
-                          opacity: w.count ? 1 : 0.18,
-                        }}
-                      />
-                      <span className="chart-label">{w.label}</span>
-                    </div>
-                  ))}
-                </div>
-                <div className="row space-between" style={{ marginTop: 13 }}>
-                  <span className="muted small">Last 8 weeks · week of</span>
-                  <span className="small">{weeks.at(-1)?.count} sets this week</span>
-                </div>
-              </>
-            ) : (
-              <p className="progress-empty muted small">
-                Weekly volume will appear after your first completed workout.
-              </p>
-            )}
-          </section>
-        )}
-      </div>
-      {view === 'overview' && (
-        <div className="card card-pad progress-links">
-          <button type="button" onClick={() => openView('stats')}>
-            <span>
-              <span>Exercise stats</span>
-              <span className="muted small">
-                Strength trends
-                {proposals?.length ? ` · ${proposals.length} suggestions to review` : ''}
-              </span>
-            </span>
-            <ArrowRight size={18} aria-hidden="true" />
-          </button>
-          <button type="button" onClick={() => openView('history')}>
-            <span>
-              <span>Workout history</span>
-              <span className="muted small">All sessions, corrections and repeat workouts</span>
-            </span>
-            <ArrowRight size={18} aria-hidden="true" />
-          </button>
-        </div>
+              {proposals.map((p: Proposal) => (
+                <ProposalCard
+                  key={p.id}
+                  proposal={p}
+                  data={data}
+                  selected={
+                    selection[p.id] ??
+                    (p.edits.length ? p.edits.map((_: unknown, i: number) => i) : [0])
+                  }
+                  setSelected={(v: number[]) => setSelection((s: any) => ({ ...s, [p.id]: v }))}
+                  apply={() => apply(p)}
+                  reject={() => reject(p)}
+                />
+              ))}
+            </section>
+          )}
+          <ExerciseStats stats={stats} unit={data.settings.unit} />
+        </>
       )}
       {view === 'history' && (
-        <>
-          {finished.length === 0 ? (
-            <div className="card card-pad progress-empty">
-              <p className="muted small">Your training history starts with the first workout.</p>
-            </div>
-          ) : (
-            <div className="card card-pad">
-              {finished.map((w: Workout) => (
-                <div key={w.id} className="history-item" style={{ alignItems: 'flex-start' }}>
-                  <div className="grow">
-                    <div className="row space-between">
-                      <div>
-                        <button className="history-workout-link" onClick={() => onWorkout(w.id)}>
-                          <b>{w.name}</b>
-                        </button>
-                        <div className="muted small" style={{ marginTop: 4 }}>
-                          {dateLabel(w.startedAt)} · {duration(w.startedAt, w.completedAt)} min ·{' '}
-                          {completedSets(w)} sets
-                        </div>
-                      </div>
-                      <Button size="sm" variant="secondary" onClick={() => onRepeat(w.id)}>
-                        <RotateCcw size={14} />
-                        Repeat
-                      </Button>
-                    </div>
-                    {(w.feeling || w.notes) && (
-                      <p className="muted small" style={{ margin: '10px 0 0' }}>
-                        {w.feeling && <b>{w.feeling}. </b>}
-                        {w.notes}
-                      </p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
+        <WorkoutHistory items={history} onWorkout={onWorkout} onRepeat={onRepeat} />
       )}
     </main>
   );
 }
-
 function CoachScreen({
   data,
   syncStatus,

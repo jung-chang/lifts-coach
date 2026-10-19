@@ -621,6 +621,31 @@ app.get('/api/community/profiles/:publicId', async (c) => {
   )
     .bind(...params)
     .all<Record<string, any>>();
+  const trends = await c.env.DB.prepare(
+    `WITH ranked_sets AS (SELECT ts.exercise_id exerciseId,ts.load_mode loadMode,ts.weight_lb weight,ts.reps,tw.started_at date,tw.workout_id workoutId,ROW_NUMBER() OVER(PARTITION BY tw.workout_id,ts.exercise_id,ts.load_mode ORDER BY CASE WHEN ts.load_mode='assistance' THEN -ts.weight_lb ELSE ts.weight_lb END DESC,ts.reps DESC,ts.completed_at DESC) setRank ${base}), sessions AS (SELECT *,ROW_NUMBER() OVER(PARTITION BY exerciseId,loadMode ORDER BY date DESC,workoutId DESC) sessionRank FROM ranked_sets WHERE setRank=1) SELECT exerciseId,loadMode,weight,reps,date FROM sessions WHERE sessionRank<=8 ORDER BY date,workoutId`,
+  )
+    .bind(...params)
+    .all<{ exerciseId: string; loadMode: string; weight: number; reps: number; date: string }>();
+  const exerciseStats = new Map<
+    string,
+    {
+      exerciseId: string;
+      name: string;
+      loadMode: string;
+      points: { date: string; weight: number; reps: number }[];
+    }
+  >();
+  for (const point of trends.results) {
+    const key = `${point.exerciseId}|${point.loadMode}`;
+    const stat = exerciseStats.get(key) ?? {
+      exerciseId: point.exerciseId,
+      name: exerciseLabel(point.exerciseId),
+      loadMode: point.loadMode,
+      points: [],
+    };
+    stat.points.push({ date: point.date, weight: point.weight, reps: point.reps });
+    exerciseStats.set(key, stat);
+  }
   return c.json({
     profile: {
       publicId: profile.publicId,
@@ -628,10 +653,38 @@ app.get('/api/community/profiles/:publicId', async (c) => {
       trainingTimezone: profile.trainingTimezone,
     },
     scope,
-    weeks: weeks.results,
-    records: records.results.map((r) => ({ ...r, name: exerciseLabel(r.exerciseId) })),
+    statsVisible: owner || session.sharing.summaryEnabled,
+    weeks: owner || session.sharing.summaryEnabled ? weeks.results : [],
+    records:
+      owner || session.sharing.summaryEnabled
+        ? records.results.map((r) => ({ ...r, name: exerciseLabel(r.exerciseId) }))
+        : [],
     workouts: page.items,
+    nextWorkoutCursor: page.nextCursor,
+    exerciseStats: owner || session.sharing.summaryEnabled ? [...exerciseStats.values()] : [],
   });
+});
+app.get('/api/community/profiles/:publicId/workouts', async (c) => {
+  const target = await c.env.DB.prepare(
+    "SELECT p.account_id accountId FROM profiles p JOIN accounts a ON a.id=p.account_id AND a.status='active' WHERE p.public_id=?",
+  )
+    .bind(c.req.param('publicId'))
+    .first<{ accountId: string }>();
+  if (!target || (await mutualBlock(c.env, c.get('accountId'), target.accountId)))
+    return c.json({ error: 'Profile unavailable.' }, 404);
+  let before: { activityAt: string; id: string } | undefined;
+  const cursor = c.req.query('cursor');
+  if (cursor)
+    try {
+      const base64 = cursor.replace(/-/g, '+').replace(/_/g, '/');
+      const value = JSON.parse(atob(base64 + '='.repeat((4 - (base64.length % 4)) % 4)));
+      if (!Array.isArray(value) || typeof value[0] !== 'string' || typeof value[1] !== 'string')
+        throw new Error();
+      before = { activityAt: value[0], id: value[1] };
+    } catch {
+      return c.json({ error: 'Invalid cursor.' }, 400);
+    }
+  return c.json(await feedItems(c.env, c.get('accountId'), target.accountId, before));
 });
 app.get('/api/community/workouts/:publicationId', async (c) => {
   const row = await c.env.DB.prepare(

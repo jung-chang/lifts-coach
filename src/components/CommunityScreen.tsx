@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Users, RefreshCw, Shield, Search, Settings, UserRound } from 'lucide-react';
+import { ArrowLeft, Users, RefreshCw, Pencil, Search, Settings } from 'lucide-react';
 import type {
   AccountSession,
   FeedItem,
@@ -15,6 +15,7 @@ import {
   blockProfile,
   getFeed,
   getProfile,
+  getProfileWorkouts,
   getWorkout,
   hideWorkouts,
   patchProfile,
@@ -22,8 +23,17 @@ import {
   searchPeople,
 } from '../lib/communityApi';
 import { toDisplayWeight } from '../../shared/domain';
-import { mondayOfDate, recentMondayDates, trainingDateAt } from '../../shared/trainingDates';
+import { recentMondayDates } from '../../shared/trainingDates';
+import { exerciseStatsFromWorkouts } from '../../shared/trainingStats';
+import {
+  ExerciseStats,
+  WorkoutHistory,
+  TrainingLinks,
+  historyItemsFromWorkouts,
+} from './TrainingHistory';
+import { Sheet } from './ui/Sheet';
 import '../community.css';
+import '../profile.css';
 
 type CommunityProps = {
   session: AccountSession | null;
@@ -36,7 +46,7 @@ type CommunityProps = {
 type View =
   | { kind: 'feed' }
   | { kind: 'people' }
-  | { kind: 'profile'; id: string }
+  | { kind: 'profile'; id: string; section?: 'overview' | 'stats' | 'history' }
   | { kind: 'workout'; id: string }
   | { kind: 'compare'; id: string };
 const initials = (name: string) =>
@@ -113,6 +123,7 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
   const [blocked, setBlocked] = useState(false);
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const feedScrollY = useRef(0);
+  const workoutReturn = useRef<View>({ kind: 'feed' });
   const feedRequest = useRef<AbortController | null>(null);
   const feedGeneration = useRef(0);
   const priorAccount = useRef(accountId);
@@ -355,7 +366,11 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
     );
   }, [view.kind]);
 
-  const openWorkout = (id: string) => go({ kind: 'workout', id });
+  const openWorkout = (id: string) => {
+    workoutReturn.current =
+      view.kind === 'profile' ? { ...view, section: 'history' } : { kind: 'feed' };
+    go({ kind: 'workout', id });
+  };
   const onBlock = async () => {
     if (!accountId || view.kind !== 'profile' || !profile) return;
     try {
@@ -371,7 +386,7 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
   const back = () => {
     if (view.kind === 'workout') {
       setWorkout(null);
-      go({ kind: 'feed' });
+      go(workoutReturn.current);
     } else if (view.kind === 'compare') go({ kind: 'profile', id: view.id });
     else go({ kind: 'feed' });
   };
@@ -549,6 +564,8 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
           )}
           {profile && (
             <ProfileContent
+              accountId={accountId}
+              initialView={view.kind === 'profile' ? view.section : undefined}
               detail={profile}
               comparePeer={comparePeer}
               unit={unit}
@@ -605,6 +622,8 @@ function ProfileContent({
   blocked,
   compare,
   myName,
+  accountId,
+  initialView = 'overview',
 }: {
   detail: ProfileDetail;
   comparePeer: ProfileDetail | null;
@@ -616,33 +635,74 @@ function ProfileContent({
   blocked: boolean;
   compare: boolean;
   myName: string;
+  accountId: string;
+  initialView?: ProfileSection;
 }) {
-  const visibleWeeks = recentMondayDates(detail.profile.trainingTimezone).map((startDate) => ({
-    startDate,
-    sets: detail.weeks.find((week) => week.startDate === startDate)?.sets ?? 0,
-  }));
-  const latestWeek = visibleWeeks.at(-1);
-  const scope = detail.scope === 'all-history' ? 'All-history summary' : 'Shared workouts only';
+  const [section, setSection] = useState<ProfileSection>(initialView);
+  const [items, setItems] = useState(detail.workouts);
+  const [cursor, setCursor] = useState(detail.nextWorkoutCursor ?? null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const request = useRef<AbortController | null>(null);
+  useEffect(() => () => request.current?.abort(), []);
+  useEffect(() => {
+    setItems(detail.workouts);
+    setCursor(detail.nextWorkoutCursor ?? null);
+  }, [detail]);
   const matched = useMemo(() => {
     if (!comparePeer) return [];
     const mine = new Map(
       comparePeer.records.map((r) => [`${r.exerciseId}|${r.loadMode}|${r.reps}`, r]),
     );
-    const canonicalIds = new Set(catalog.map((exercise) => exercise.id));
+    const canonical = new Set(catalog.map((e) => e.id));
     return detail.records
-      .filter((record) => canonicalIds.has(record.exerciseId))
-      .flatMap((record) => {
-        const match = mine.get(`${record.exerciseId}|${record.loadMode}|${record.reps}`);
-        return match ? [{ other: record, mine: match }] : [];
+      .filter((r) => canonical.has(r.exerciseId))
+      .flatMap((other) => {
+        const own = mine.get(`${other.exerciseId}|${other.loadMode}|${other.reps}`);
+        return own ? [{ other, mine: own }] : [];
       });
-  }, [comparePeer, detail.records]);
+  }, [detail.records, comparePeer]);
+  const go = (next: ProfileSection) => {
+    setSection(next);
+    window.scrollTo({ top: 0 });
+  };
+  const more = async () => {
+    if (!cursor || loading) return;
+    const controller = new AbortController();
+    request.current = controller;
+    setLoading(true);
+    setError('');
+    try {
+      const page = await getProfileWorkouts(
+        accountId,
+        detail.profile.publicId,
+        cursor,
+        controller.signal,
+      );
+      if (!controller.signal.aborted) {
+        setItems((prior) => [...new Map([...prior, ...page.items].map((w) => [w.id, w])).values()]);
+        setCursor(page.nextCursor);
+      }
+    } catch (e) {
+      if (!controller.signal.aborted)
+        setError(e instanceof Error ? e.message : 'Could not load workouts.');
+    } finally {
+      if (!controller.signal.aborted) setLoading(false);
+    }
+  };
   return (
     <div className="community-profile">
       <div className="community-profile-identity">
         <Avatar profile={detail.profile} />
         <div>
           <h2>{detail.profile.displayName}</h2>
-          <p>{compare ? `Compared with ${myName}` : scope}</p>
+          <p>
+            {compare
+              ? `Compared with ${myName}`
+              : detail.scope === 'all-history'
+                ? 'All-history summary'
+                : 'Shared workouts only'}
+          </p>
         </div>
       </div>
       {compare ? (
@@ -655,124 +715,63 @@ function ProfileContent({
         />
       ) : (
         <>
-          {detail.scope === 'all-history' && (
-            <div className="community-stat">
-              <span>Current week{latestWeek ? ` · ${latestWeek.startDate}` : ''}</span>
-              <strong>{latestWeek?.sets ?? 0}</strong>
-              <small>Completed working sets · all-history scope</small>
-            </div>
+          {section !== 'overview' && (
+            <>
+              <Button variant="ghost" onClick={() => go('overview')}>
+                <ArrowLeft size={16} /> Back to profile
+              </Button>
+              <h2 className="profile-section-heading">
+                {section === 'stats' ? 'Exercise stats' : 'Workout history'}
+              </h2>
+            </>
           )}
-          {detail.scope === 'shared-workouts' && (
-            <p className="community-note">Totals and records use shared workouts only.</p>
+          {section === 'overview' && (
+            <TrainingLinks
+              onStats={() => go('stats')}
+              onHistory={() => go('history')}
+              historyDescription="Shared completed workouts"
+            />
           )}
-          <section className="community-section">
-            <h3>Weekly volume</h3>
-            <WeeklyBars weeks={visibleWeeks} />
-          </section>
-          {detail.records.length > 0 && (
-            <section className="community-section">
-              <div className="community-section-title">
-                <h3>Qualified lift records</h3>
-                <span className="muted small">Actual completed sets</span>
-              </div>
-              <div className="community-records">
-                {detail.records.map((record, index) => (
-                  <div
-                    className="community-record"
-                    key={`${record.exerciseId}-${record.loadMode}-${record.date}-${index}`}
-                  >
-                    <span>
-                      {record.name}
-                      <small>
-                        {record.reps} reps · {dateTime(record.date)}
-                      </small>
-                    </span>
-                    <strong>{displayLoad(record.loadMode, record.weight, unit)}</strong>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-          <section className="community-section">
-            <h3>Recent shared workouts</h3>
-            {detail.workouts.length ? (
-              detail.workouts.map((item) => (
-                <button
-                  key={item.id}
-                  className="community-recent-row"
-                  onClick={() => onWorkout(item.id)}
-                >
-                  <span>
-                    <b>{item.title}</b>
-                    <small>
-                      {dateTime(item.activityAt)} · {item.setCount} working sets
-                    </small>
-                  </span>
-                </button>
-              ))
+          {section === 'stats' &&
+            ((detail.statsVisible ?? detail.scope === 'all-history') ? (
+              <ExerciseStats stats={detail.exerciseStats ?? []} unit={unit} />
             ) : (
-              <p className="community-empty">No shared workouts yet.</p>
-            )}
-          </section>
-          {!own && (
-            <section className="community-options">
-              <h3>Options</h3>
-              {onCompare && <Button onClick={onCompare}>Compare training</Button>}
+              <p className="community-empty">Profile stats are private.</p>
+            ))}
+          {section === 'history' && (
+            <WorkoutHistory
+              items={items.map((w) => ({
+                id: w.id,
+                title: w.title,
+                date: w.activityAt,
+                durationMinutes: w.durationMinutes,
+                setCount: w.setCount,
+              }))}
+              onWorkout={onWorkout}
+              onLoadMore={cursor ? () => void more() : undefined}
+              loading={loading}
+              emptyMessage="No shared workouts yet."
+            />
+          )}
+          {error && <p role="alert">{error}</p>}
+          {section === 'overview' && !own && (
+            <div className="community-options">
+              {onCompare && (detail.statsVisible ?? detail.scope === 'all-history') && (
+                <Button onClick={onCompare}>Compare training</Button>
+              )}
               {onBlock && (
-                <Button variant="danger" onClick={onBlock}>
+                <Button variant="ghost" onClick={onBlock}>
                   Block profile
                 </Button>
               )}
               {blocked && <p role="status">Profile blocked.</p>}
-            </section>
+            </div>
           )}
         </>
       )}
     </div>
   );
 }
-
-function WeeklyBars({ weeks }: { weeks: ProfileDetail['weeks'] }) {
-  const values = [...weeks].sort((a, b) => a.startDate.localeCompare(b.startDate)).slice(-8);
-  const maximum = Math.max(1, ...values.map((week) => week.sets));
-  if (!values.length)
-    return <p className="community-empty">No weekly volume is available for this sharing scope.</p>;
-  return (
-    <div className="community-weekly-chart" role="img" aria-label="Completed working sets by week">
-      {values.map((week) => (
-        <div
-          className="community-weekly-column"
-          key={week.startDate}
-          title={`${week.startDate}: ${week.sets} working sets`}
-        >
-          <span style={{ height: `${Math.max(4, (82 * week.sets) / maximum)}px` }} />
-          <strong>{week.sets}</strong>
-          <small>{week.startDate.slice(5)}</small>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function OwnWeeklyBars({ weeks }: { weeks: Array<readonly [string, number]> }) {
-  const maximum = Math.max(1, ...weeks.map(([, sets]) => sets));
-  return (
-    <div
-      className="community-weekly-chart"
-      role="img"
-      aria-label="Completed working sets by week from local workout history"
-    >
-      {weeks.map(([date, sets]) => (
-        <div className="community-weekly-column" key={date} title={`${date}: ${sets} working sets`}>
-          <span style={{ height: `${Math.max(4, (82 * sets) / maximum)}px` }} />
-          <strong>{sets}</strong>
-          <small>{date.slice(5)}</small>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function CompareContent({
   detail,
   peer,
@@ -802,6 +801,8 @@ function CompareContent({
   }, [detail.weeks, peer]);
   const weeks = allWeeks.slice(-8);
   const globalMaximum = Math.max(1, ...weeks.flatMap((week) => [week.mine, week.other]));
+  if (detail.statsVisible === false || peer?.statsVisible === false)
+    return <p className="community-empty">Both profiles must share stats to compare training.</p>;
   return (
     <div className="community-compare">
       <div className="community-compare-controls">
@@ -1003,6 +1004,7 @@ function SharedWorkoutContent({
   );
 }
 
+type ProfileSection = 'overview' | 'stats' | 'history';
 type OwnProps = {
   session: AccountSession | null;
   unit: Unit;
@@ -1013,7 +1015,10 @@ type OwnProps = {
   onSignOut: () => void;
   onClaimLegacy?: () => void;
   legacyAvailable?: boolean;
-  onWorkout?: (workoutId: string) => void;
+  onWorkout?: (id: string) => void;
+  onRepeat?: (id: string) => void;
+  initialView?: ProfileSection;
+  onViewChange?: (view: ProfileSection) => void;
 };
 export function OwnProfileScreen({
   session,
@@ -1026,111 +1031,49 @@ export function OwnProfileScreen({
   onClaimLegacy,
   legacyAvailable = false,
   onWorkout,
+  onRepeat,
+  initialView = 'overview',
+  onViewChange,
 }: OwnProps) {
+  const [view, setView] = useState<ProfileSection>(initialView);
+  const stats = useMemo(() => exerciseStatsFromWorkouts(data.workouts), [data.workouts]);
+  const history = useMemo(() => historyItemsFromWorkouts(data.workouts), [data.workouts]);
+  const [editing, setEditing] = useState(false);
+  const [settings, setSettings] = useState(false);
   const [name, setName] = useState(session?.profile.displayName ?? '');
-  const [timezone, setTimezone] = useState(
-    session?.profile.trainingTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
-  );
-  const [summary, setSummary] = useState(session?.sharing.summaryEnabled ?? false);
+  const [timezone, setTimezone] = useState(session?.profile.trainingTimezone ?? 'UTC');
   const [automatic, setAutomatic] = useState(session?.sharing.autoPublishWorkouts ?? false);
-  const [audienceReviewed, setAudienceReviewed] = useState(false);
+  const [shared, setShared] = useState(session?.sharing.summaryEnabled ?? false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [hideStatus, setHideStatus] = useState('');
-  const completed = data.workouts.filter((w) => w.status === 'finished');
-  const weeks = useMemo(() => {
-    const totals = new Map<string, number>();
-    for (const workout of completed)
-      for (const exercise of workout.exercises)
-        for (const set of exercise.actualSets) {
-          if (set.kind !== 'working' || set.status !== 'completed') continue;
-          const timezone = session?.profile.trainingTimezone ?? 'UTC';
-          const trainingDate =
-            workout.trainingDate ??
-            trainingDateAt(set.completedAt ?? workout.completedAt ?? workout.startedAt, timezone);
-          const key = mondayOfDate(trainingDate);
-          totals.set(key, (totals.get(key) ?? 0) + 1);
-        }
-    const timezone = session?.profile.trainingTimezone ?? 'UTC';
-    return recentMondayDates(timezone).map((date) => [date, totals.get(date) ?? 0] as const);
-  }, [completed, session?.profile.trainingTimezone]);
-  const records = useMemo(() => {
-    const best = new Map<
-      string,
-      {
-        exerciseId: string;
-        name: string;
-        loadMode: LoadMode;
-        weight: number;
-        reps: number;
-        date: string;
-      }
-    >();
-    for (const workout of completed)
-      for (const exercise of workout.exercises)
-        for (const set of exercise.actualSets) {
-          if (set.kind !== 'working' || set.status !== 'completed') continue;
-          const key = `${exercise.exerciseId}|${set.loadMode}|${set.reps}`;
-          const old = best.get(key);
-          if (
-            !old ||
-            (set.loadMode === 'assistance' ? set.weight < old.weight : set.weight > old.weight)
-          )
-            best.set(key, {
-              exerciseId: exercise.exerciseId,
-              name: exercise.name,
-              loadMode: set.loadMode,
-              weight: set.weight,
-              reps: set.reps,
-              date: set.completedAt ?? workout.completedAt ?? workout.startedAt,
-            });
-        }
-    return [...best.values()].sort((a, b) => a.name.localeCompare(b.name) || a.reps - b.reps);
-  }, [completed]);
+  const [status, setStatus] = useState('');
+  const account = useRef(session?.accountId);
+  account.current = session?.accountId;
   useEffect(() => {
     setName(session?.profile.displayName ?? '');
-    setTimezone(
-      session?.profile.trainingTimezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
-    );
-    setSummary(session?.sharing.summaryEnabled ?? false);
+    setTimezone(session?.profile.trainingTimezone ?? 'UTC');
     setAutomatic(session?.sharing.autoPublishWorkouts ?? false);
+    setShared(session?.sharing.summaryEnabled ?? false);
   }, [session]);
-  const save = async () => {
-    if (!session) return;
+  const go = (next: ProfileSection) => {
+    setView(next);
+    onViewChange?.(next);
+    window.scrollTo({ top: 0 });
+  };
+  const run = async (action: () => Promise<AccountSession | void>) => {
+    if (!session || busy) return;
+    const id = session.accountId;
     setBusy(true);
     setError('');
+    setStatus('');
     try {
-      let next = session;
-      if (
-        name.trim() !== session.profile.displayName ||
-        timezone !== session.profile.trainingTimezone
-      )
-        next = await patchProfile(session.accountId, {
-          displayName: name.trim(),
-          trainingTimezone: timezone,
-        });
-      if (
-        summary !== session.sharing.summaryEnabled ||
-        automatic !== session.sharing.autoPublishWorkouts
-      ) {
-        const expanding =
-          (summary && !session.sharing.summaryEnabled) ||
-          (automatic && !session.sharing.autoPublishWorkouts);
-        if (expanding && !audienceReviewed)
-          throw new Error('Review the audience notice before changing sharing settings.');
-        next = await patchSharing(session.accountId, {
-          summaryEnabled: summary,
-          autoPublishWorkouts: automatic,
-          policyRevision: session.sharing.policyRevision,
-          audienceAcknowledged: audienceReviewed,
-        });
-      }
-      onSessionChange(next);
-      setAudienceReviewed(false);
+      const next = await action();
+      if (account.current === id && next) onSessionChange(next);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save profile settings.');
+      if (account.current === id)
+        setError(e instanceof Error ? e.message : 'Could not save changes.');
     } finally {
-      setBusy(false);
+      if (account.current === id) setBusy(false);
     }
   };
   if (!session)
@@ -1140,143 +1083,143 @@ export function OwnProfileScreen({
         <Button onClick={onBack}>Back</Button>
       </main>
     );
+  const toggleStats = () =>
+    void run(async () => {
+      const next = await patchSharing(session.accountId, {
+        summaryEnabled: !shared,
+        autoPublishWorkouts: session.sharing.autoPublishWorkouts,
+        policyRevision: session.sharing.policyRevision,
+        audienceAcknowledged: !shared,
+      });
+      if (account.current === session.accountId) setShared(next.sharing.summaryEnabled);
+      return next;
+    });
   return (
     <main className="page own-profile-page">
       <header className="page-heading">
-        <div>
-          <span className="eyebrow">Your account</span>
-          <h1>Profile</h1>
+        <div className="community-own-identity profile-identity">
+          <Avatar profile={session.profile} />
+          <h1>{session.profile.displayName}</h1>
+          <Button
+            variant="ghost"
+            size="icon"
+            aria-label="Edit display name"
+            onClick={() => {
+              setName(session.profile.displayName);
+              setError('');
+              setEditing(true);
+            }}
+          >
+            <Pencil size={17} />
+          </Button>
         </div>
-        <Button variant="ghost" onClick={onBack}>
-          <ArrowLeft size={17} /> Back
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Account settings"
+          onClick={() => {
+            setError('');
+            setSettings(true);
+          }}
+        >
+          <Settings size={19} />
         </Button>
       </header>
-      <section className="community-own-identity">
-        <Avatar profile={session.profile} />
-        <div>
-          <h2>{session.profile.displayName}</h2>
-          <p>{session.email}</p>
-        </div>
-      </section>
-      <section className="community-section">
-        <div className="community-section-title">
-          <h2>Weekly volume</h2>
-          <span className="muted small">Completed working sets</span>
-        </div>
-        <div className="community-stat">
-          <span>Current week</span>
-          <strong>{weeks.at(-1)?.[1] ?? 0}</strong>
-          <small>Local completed history · {session.profile.trainingTimezone}</small>
-        </div>
-        <OwnWeeklyBars weeks={weeks} />
-      </section>
-      <section className="community-section">
-        <div className="community-section-title">
-          <h2>Best completed sets</h2>
-          <span className="muted small">Grouped by exercise, load mode and reps</span>
-        </div>
-        {records.length ? (
-          <div className="community-records">
-            {records.map((record) => (
-              <div
-                key={`${record.exerciseId}-${record.loadMode}-${record.reps}`}
-                className="community-record"
-              >
-                <span>
-                  {record.name}
-                  <small>
-                    {record.reps} reps · {dateTime(record.date)}
-                  </small>
-                </span>
-                <strong>{displayLoad(record.loadMode, record.weight, unit)}</strong>
-              </div>
-            ))}
+      {view !== 'overview' && (
+        <>
+          <Button variant="ghost" onClick={() => go('overview')}>
+            <ArrowLeft size={16} /> Back to profile
+          </Button>
+          <h2 className="profile-section-heading">
+            {view === 'stats' ? 'Exercise stats' : 'Workout history'}
+          </h2>
+        </>
+      )}
+      {view === 'overview' && (
+        <>
+          <TrainingLinks onStats={() => go('stats')} onHistory={() => go('history')} />
+          <div className="profile-share-setting">
+            <div>
+              <label htmlFor="share-profile-stats">
+                Share profile stats with others in community
+              </label>
+              <p className="muted small">
+                When on, members can see your all-history exercise stats and lift records, including
+                private workouts. Workout sharing is separate. Notes and Coach conversations stay
+                private.
+              </p>
+            </div>
+            <button
+              id="share-profile-stats"
+              className="switch"
+              role="switch"
+              aria-label="Share profile stats with others in community"
+              aria-checked={shared}
+              data-on={shared}
+              disabled={busy}
+              onClick={toggleStats}
+            >
+              <span />
+            </button>
           </div>
-        ) : (
-          <p className="community-empty">Completed working sets will appear here.</p>
-        )}
-      </section>
-      <section className="community-section">
-        <h2>Recent workouts</h2>
-        <div className="community-records">
-          {completed
-            .slice()
-            .sort((a, b) => (b.completedAt ?? '').localeCompare(a.completedAt ?? ''))
-            .slice(0, 5)
-            .map((w) => (
-              <button
-                key={w.id}
-                className="community-recent-row"
-                onClick={() => onWorkout?.(w.id)}
-                disabled={!onWorkout}
-              >
-                <span>
-                  <b>{w.name}</b>
-                  <small>
-                    {w.completedAt ? dateTime(w.completedAt) : 'Completed'} ·{' '}
-                    {w.exercises.reduce(
-                      (n, e) =>
-                        n +
-                        e.actualSets.filter((s) => s.kind === 'working' && s.status === 'completed')
-                          .length,
-                      0,
-                    )}{' '}
-                    working sets
-                  </small>
-                </span>
-              </button>
-            ))}
-        </div>
-        {!completed.length && <p className="community-empty">No completed workouts yet.</p>}
-      </section>
-      <section className="community-section community-profile-form">
-        <h2>Profile details</h2>
+        </>
+      )}
+      {view === 'stats' && <ExerciseStats stats={stats} unit={unit} />}
+      {view === 'history' && (
+        <WorkoutHistory items={history} onWorkout={(id) => onWorkout?.(id)} onRepeat={onRepeat} />
+      )}
+      {error && (
+        <p role="alert" className="community-error-text">
+          {error}
+        </p>
+      )}
+      <Sheet
+        open={editing}
+        onOpenChange={setEditing}
+        title="Edit display name"
+        description="This is the name other community members see."
+      >
         <label className="form-field">
           <span>Display name</span>
           <input
+            autoFocus
             className="input"
             value={name}
             maxLength={60}
             onChange={(e) => setName(e.target.value)}
           />
         </label>
+        {error && <p role="alert">{error}</p>}
+        <div className="sheet-actions">
+          <Button onClick={() => setEditing(false)}>Cancel</Button>
+          <Button
+            variant="primary"
+            disabled={busy || !name.trim()}
+            onClick={() =>
+              void run(async () => {
+                const next = await patchProfile(session.accountId, {
+                  displayName: name.trim(),
+                  trainingTimezone: session.profile.trainingTimezone,
+                });
+                if (account.current === session.accountId) setEditing(false);
+                return next;
+              })
+            }
+          >
+            Save name
+          </Button>
+        </div>
+      </Sheet>
+      <Sheet
+        open={settings}
+        onOpenChange={setSettings}
+        title="Account settings"
+        description={session.email}
+      >
         <label className="form-field">
           <span>Training timezone</span>
           <input className="input" value={timezone} onChange={(e) => setTimezone(e.target.value)} />
         </label>
-      </section>
-      <section className="community-section community-sharing">
-        <h2>Sharing</h2>
-        <p>Choose separately whether people can see your summaries and future finished workouts.</p>
-        <div className="community-audience">
-          <Shield size={18} />
-          <div>
-            <strong>Audience: admitted Lifts Coach accounts</strong>
-            <p>
-              A shared summary includes your display name, weekly volume and qualified lift records.
-              A shared workout includes its approved title, completion time, duration and completed
-              exercise sets. Notes, feelings, Coach data and email stay private. Older workouts
-              remain private unless shared individually.
-            </p>
-          </div>
-        </div>
-        <label className="community-consent">
-          <input
-            type="checkbox"
-            checked={audienceReviewed}
-            onChange={(e) => setAudienceReviewed(e.target.checked)}
-          />
-          <span>I reviewed who can see shared profile summaries and workouts.</span>
-        </label>
-        <label className="community-consent">
-          <input type="checkbox" checked={summary} onChange={(e) => setSummary(e.target.checked)} />
-          <span>Share all-history summary and qualified lift records</span>
-        </label>
-        <p className="community-scope">
-          {summary
-            ? 'Scope: all-history, including private workouts.'
-            : 'Scope: summaries use shared workouts only.'}
-        </p>
         <label className="community-consent">
           <input
             type="checkbox"
@@ -1285,55 +1228,71 @@ export function OwnProfileScreen({
           />
           <span>Automatically share future finished workouts</span>
         </label>
-        <p className="community-scope">
-          {automatic
-            ? 'Applies to future workouts after this setting is saved.'
-            : 'Future workouts remain private unless you choose to share them.'}
+        <p className="muted small">
+          All admitted members can see shared workout dates, exercise names, completed loads and
+          reps. Older workouts remain private. Turning this off affects future workouts.
         </p>
         <Button
-          variant="danger"
           disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            setError('');
-            setHideStatus('');
-            try {
-              await hideWorkouts(session.accountId);
-              setHideStatus('All currently shared workouts are hidden from the community.');
-            } catch (e) {
-              setError(e instanceof Error ? e.message : 'Could not hide shared workouts.');
-            } finally {
-              setBusy(false);
-            }
-          }}
+          onClick={() =>
+            void run(async () => {
+              let next = session;
+              if (timezone !== session.profile.trainingTimezone)
+                next = await patchProfile(session.accountId, {
+                  displayName: session.profile.displayName,
+                  trainingTimezone: timezone,
+                });
+              if (automatic !== session.sharing.autoPublishWorkouts)
+                next = await patchSharing(session.accountId, {
+                  summaryEnabled: shared,
+                  autoPublishWorkouts: automatic,
+                  policyRevision: session.sharing.policyRevision,
+                  audienceAcknowledged: automatic,
+                });
+              setStatus('Account settings saved.');
+              return next;
+            })
+          }
         >
-          Hide all shared workouts
+          Save account settings
         </Button>
-        {hideStatus && (
-          <p className="community-note" role="status">
-            {hideStatus}
-          </p>
-        )}
-      </section>
-      {error && (
-        <p role="alert" className="community-error-text">
-          {error}
-        </p>
-      )}
-      <div className="community-own-actions">
-        <Button variant="primary" disabled={busy} onClick={() => void save()}>
-          {busy ? 'Saving…' : 'Save profile'}
-        </Button>
-        <Button onClick={onSettings}>
-          <Settings size={17} /> Settings
-        </Button>
-        <Button onClick={onSignOut}>Sign out</Button>
-        {legacyAvailable && onClaimLegacy && (
-          <Button onClick={onClaimLegacy}>
-            <UserRound size={17} /> Claim legacy history
+        <div className="divider" />
+        <div className="community-own-actions">
+          <Button
+            onClick={() => {
+              setSettings(false);
+              onSettings();
+            }}
+          >
+            App settings
           </Button>
-        )}
-      </div>
+          <Button
+            variant="danger"
+            disabled={busy}
+            onClick={() =>
+              void run(async () => {
+                await hideWorkouts(session.accountId);
+                setStatus('All shared workouts are now hidden.');
+              })
+            }
+          >
+            Hide all shared workouts
+          </Button>
+          <Button onClick={onSignOut}>Sign out</Button>
+          {legacyAvailable && onClaimLegacy && (
+            <Button
+              onClick={() => {
+                setSettings(false);
+                onClaimLegacy();
+              }}
+            >
+              Claim device history
+            </Button>
+          )}
+        </div>
+        {status && <p role="status">{status}</p>}
+        {error && <p role="alert">{error}</p>}
+      </Sheet>
     </main>
   );
 }

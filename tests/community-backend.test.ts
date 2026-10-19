@@ -156,6 +156,120 @@ function finishedData() {
 }
 
 describe('community backend authorization and publication', () => {
+  it('shares profile trends only while enabled without publishing private workout history', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1(),
+      owner = await auth('stats-owner@example.test', 'stats-owner'),
+      member = await auth('stats-viewer@example.test', 'stats-viewer');
+    const session = (await (await call(db, owner, '/api/session')).json()) as any;
+    const data = finishedData(),
+      other = structuredClone(data.workouts[0]);
+    other.id = 'older-session';
+    other.startedAt = '2026-10-01T12:00:00Z';
+    other.completedAt = '2026-10-01T13:00:00Z';
+    other.exercises[0].actualSets[0].weight = 80;
+    other.exercises[0].actualSets[0].completedAt = other.completedAt;
+    data.workouts.push(other);
+    expect(
+      (
+        await call(db, owner, '/api/state', 'PUT', {
+          accountId: session.accountId,
+          operationId: 'profile-trends',
+          deviceId: 'synthetic',
+          baseRevision: 0,
+          data,
+        })
+      ).status,
+    ).toBe(200);
+    const path = `/api/community/profiles/${session.profile.publicId}`;
+    expect(((await (await call(db, member, path)).json()) as any).exerciseStats).toEqual([]);
+    const granted = (await (
+      await call(db, owner, '/api/me/sharing', 'PATCH', {
+        summaryEnabled: true,
+        autoPublishWorkouts: false,
+        policyRevision: session.sharing.policyRevision,
+        audienceAcknowledged: true,
+      })
+    ).json()) as any;
+    const shared = (await (await call(db, member, path)).json()) as any;
+    expect(shared.statsVisible).toBe(true);
+    expect(shared.exerciseStats[0].points.map((p: any) => p.weight)).toEqual([80, 100]);
+    expect(shared.workouts).toEqual([]);
+    expect(
+      (
+        await call(db, owner, '/api/me/sharing', 'PATCH', {
+          summaryEnabled: false,
+          autoPublishWorkouts: false,
+          policyRevision: granted.sharing.policyRevision,
+          audienceAcknowledged: false,
+        })
+      ).status,
+    ).toBe(200);
+    const hidden = (await (await call(db, member, path)).json()) as any;
+    expect(hidden.statsVisible).toBe(false);
+    expect(hidden.exerciseStats).toEqual([]);
+    expect(hidden.records).toEqual([]);
+    db.db.close();
+  });
+
+  it('paginates only a selected profile’s shared workout history and denies blocked reads', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1(),
+      owner = await auth('history-owner@example.test', 'history-owner'),
+      member = await auth('history-viewer@example.test', 'history-viewer');
+    const session = (await (await call(db, owner, '/api/session')).json()) as any;
+    const consent = (await (
+      await call(db, owner, '/api/me/sharing', 'PATCH', {
+        summaryEnabled: false,
+        autoPublishWorkouts: true,
+        policyRevision: session.sharing.policyRevision,
+        audienceAcknowledged: true,
+      })
+    ).json()) as any;
+    const data = finishedData(),
+      template = data.workouts[0];
+    data.workouts = Array.from({ length: 6 }, (_, i) => ({
+      ...structuredClone(template),
+      id: `history-${i}`,
+      startedAt: consent.sharing.enabledAt,
+      completedAt: new Date(Date.now() + i).toISOString(),
+    }));
+    expect(
+      (
+        await call(db, owner, '/api/state', 'PUT', {
+          accountId: session.accountId,
+          operationId: 'history-page',
+          deviceId: 'synthetic',
+          baseRevision: 0,
+          data,
+        })
+      ).status,
+    ).toBe(200);
+    const path = `/api/community/profiles/${session.profile.publicId}`;
+    const page = (await (await call(db, member, path)).json()) as any;
+    expect(page.workouts).toHaveLength(5);
+    expect(page.nextWorkoutCursor).toBeTruthy();
+    const next = (await (
+      await call(
+        db,
+        member,
+        `${path}/workouts?cursor=${encodeURIComponent(page.nextWorkoutCursor)}`,
+      )
+    ).json()) as any;
+    expect(next.items).toHaveLength(1);
+    expect(next.nextCursor).toBeNull();
+    expect(new Set([...page.workouts, ...next.items].map((w: any) => w.id)).size).toBe(6);
+    await call(db, member, `${path}/block`, 'POST');
+    expect((await call(db, member, `${path}/workouts`)).status).toBe(404);
+    db.db.close();
+  });
+
   it('selects lower assistance as the qualified record at matching reps', async () => {
     vi.stubGlobal(
       'fetch',
@@ -367,7 +481,9 @@ describe('community backend authorization and publication', () => {
     const sharedProfile = await call(db, member, `/api/community/profiles/${os.profile.publicId}`);
     const sharedProfileBody = (await sharedProfile.json()) as any;
     expect(sharedProfileBody.scope).toBe('shared-workouts');
-    expect(sharedProfileBody.records).toHaveLength(1);
+    expect(sharedProfileBody.statsVisible).toBe(false);
+    expect(sharedProfileBody.records).toHaveLength(0);
+    expect(sharedProfileBody.exerciseStats).toEqual([]);
     expect(sharedProfileBody.workouts).toHaveLength(1);
     expect(
       db.db
