@@ -40,6 +40,21 @@ function setup(unit: 'lb' | 'kg' = 'lb') {
 describe('RoutineEditor removal review', () => {
   afterEach(() => cleanup());
 
+  it('searches exercise replacements by equipment and muscle, then updates only the draft', () => {
+    const { data } = setup();
+    fireEvent.click(screen.getByText('Options'));
+    fireEvent.click(screen.getByRole('button', { name: /Replace exercise/ }));
+    const search = screen.getByRole('searchbox', { name: 'Search replace exercise' });
+    fireEvent.change(search, { target: { value: 'dumbbells' } });
+    fireEvent.change(search, { target: { value: 'triceps dumbbells' } });
+    const replacement = screen.getByRole('button', { name: /Dumbbell bench press/i });
+    fireEvent.click(replacement);
+
+    expect(screen.getByText('Dumbbell bench press')).toBeTruthy();
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(data.routines[0].exercises[0].exerciseId).toBe(bench.id);
+  });
+
   it('blocks a displayed kg value that exceeds the stored load limit until corrected', () => {
     const { onSave } = setup('kg');
     const target = screen.getByLabelText('Total load (kg)');

@@ -59,11 +59,7 @@ export function ProgressCalendar({
 
   return (
     <section className="card card-pad progress-calendar" aria-label="Workout calendar">
-      <div className="row space-between progress-calendar-header">
-        <div>
-          <div className="eyebrow">Training days</div>
-          <h2 style={{ marginTop: 4 }}>Workout calendar</h2>
-        </div>
+      <div className="progress-calendar-header">
         <div className="row progress-calendar-nav">
           <Button
             variant="secondary"

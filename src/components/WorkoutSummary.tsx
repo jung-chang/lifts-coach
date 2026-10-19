@@ -37,12 +37,11 @@ export function WorkoutSummary({
     : null;
   return (
     <main className="page own-workout-summary">
-      <Button variant="ghost" onClick={onBack}>
+      <Button className="back-button" variant="ghost" onClick={onBack}>
         <ArrowLeft size={16} /> Back
       </Button>
       <div className="page-heading">
         <div>
-          <div className="eyebrow">Your completed workout</div>
           <h1>{workout.name}</h1>
           <p className="muted small">
             {new Date(workout.completedAt ?? workout.startedAt).toLocaleString()}

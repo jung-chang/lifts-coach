@@ -108,11 +108,12 @@ summary:focus-visible {
   flex-shrink: 0;
 }
 .progress-calendar-header {
-  gap: 12px;
-  flex-wrap: wrap;
+  display: flex;
+  justify-content: center;
 }
 .progress-calendar-nav {
   gap: 8px;
+  justify-content: center;
 }
 .progress-calendar-nav .button {
   min-width: 44px;
@@ -261,7 +262,7 @@ summary:focus-visible {
 }
 .page-heading {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
   margin-bottom: 24px;
@@ -367,6 +368,30 @@ b,
   height: 44px;
   padding: 0;
   border-radius: 50%;
+}
+.button > svg {
+  display: block;
+  flex-shrink: 0;
+}
+.back-button {
+  gap: 8px;
+  min-height: 44px;
+  padding: 0;
+  justify-content: flex-start;
+}
+.page > .back-button,
+.community-profile > .back-button {
+  margin-left: 0;
+  margin-bottom: 12px;
+}
+.page-heading > .back-button {
+  flex: none;
+}
+.data-settings-page > .page-heading {
+  justify-content: flex-start;
+}
+.data-settings-page > .page-heading > .button:last-child {
+  margin-left: auto;
 }
 .button-primary {
   color: #292d23;
@@ -2330,5 +2355,54 @@ summary {
   }
   .workout-focus > .page-heading > .row {
     justify-content: space-between;
+  }
+}
+
+.history-date-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.history-date-filters .form-field {
+  min-width: 0;
+  margin: 0;
+}
+.history-date-filters input {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+}
+.history-date-filters > button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+.page-title-group {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+.page-title-group h1 {
+  margin: 0;
+}
+.progress-links > button {
+  min-height: 56px;
+}
+.workout-exercise-card .row > div {
+  min-width: 0;
+  width: 100%;
+}
+.workout-exercise-card .search-picker-trigger {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 20px;
+  font-weight: 500;
+}
+@media (max-width: 360px) {
+  .history-date-filters {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

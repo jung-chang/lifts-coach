@@ -60,6 +60,7 @@ import { Sheet } from './components/ui/Sheet';
 import { RoutineEditor } from './components/RoutineEditor';
 import { SetTable } from './components/SetTable';
 import { WorkoutOptions } from './components/WorkoutOptions';
+import { SearchPicker } from './components/SearchPicker';
 import { FirstRunOnboarding } from './components/FirstRunOnboarding';
 import { formatLoadValue } from './components/LoadSemantics';
 import { SyncDetails } from './components/SyncDetails';
@@ -881,15 +882,6 @@ function App() {
                   />
                 ) : (
                   <>
-                    <div className="page-heading train-page-heading">
-                      <div>
-                        <div className="eyebrow">Your training. Your pace.</div>
-                        <h1>Ready when you are.</h1>
-                        <p className="muted small">
-                          Your next routine picks up where you left off.
-                        </p>
-                      </div>
-                    </div>
                     {(() => {
                       const next =
                         data.routines[data.settings.rotationIndex % data.routines.length] ||
@@ -1850,7 +1842,6 @@ function WorkoutScreen({
     <div className="workout-focus">
       <div className="page-heading">
         <div>
-          <div className="eyebrow">Workout in progress</div>
           <h1>{workout.name}</h1>
         </div>
         <div className="row">
@@ -1893,23 +1884,6 @@ function WorkoutScreen({
           }}
         />
       </div>
-      {workout.exercises.length > 1 && (
-        <div
-          className="row workout-exercise-tabs"
-          style={{ overflowX: 'auto', paddingBottom: 5, marginBottom: 13 }}
-        >
-          {workout.exercises.map((e: WorkoutExercise, i: number) => (
-            <button
-              key={e.id}
-              className={`workout-exercise-tab ${i === currentEx ? 'active' : ''}`}
-              onClick={() => setCurrentEx(i)}
-              style={{ minHeight: 44, whiteSpace: 'nowrap' }}
-            >
-              {i + 1}. {e.name}
-            </button>
-          ))}
-        </div>
-      )}
       {ex ? (
         <>
           <div className="card card-pad workout-exercise-card" style={{ marginBottom: 14 }}>
@@ -1918,7 +1892,34 @@ function WorkoutScreen({
                 <div className="eyebrow">
                   Exercise {currentEx + 1} of {workout.exercises.length}
                 </div>
-                <h2 style={{ marginTop: 5 }}>{ex.name}</h2>
+                {workout.exercises.length > 1 ? (
+                  <SearchPicker
+                    label="Switch exercise"
+                    searchLabel="Search workout exercises"
+                    value={ex.id}
+                    options={workout.exercises.map((item: WorkoutExercise, index: number) => {
+                      const source = allExercises(data).find(
+                        (candidate) => candidate.id === item.exerciseId,
+                      );
+                      return {
+                        value: item.id,
+                        label: item.name,
+                        description: `${index + 1} of ${workout.exercises.length} · ${item.actualSets.filter((set) => set.kind === 'working' && set.status === 'completed').length} of ${item.actualSets.filter((set) => set.kind === 'working').length} sets done`,
+                        searchText: `${source?.muscles.join(' ') || ''} ${source?.equipment || ''}`,
+                      };
+                    })}
+                    onChange={(exerciseId) =>
+                      setCurrentEx(
+                        workout.exercises.findIndex(
+                          (item: WorkoutExercise) => item.id === exerciseId,
+                        ),
+                      )
+                    }
+                    placeholder="Search this workout"
+                  />
+                ) : (
+                  <h2 style={{ marginTop: 5 }}>{ex.name}</h2>
+                )}
                 <span className="muted small">
                   {formatLoadValue(ex.loadMode, toDisplayWeight(ex.targetWeight, unit), unit)} ·{' '}
                   target {ex.sets} × {ex.repRange[0]}–{ex.repRange[1]}
@@ -2038,13 +2039,12 @@ function ProgressScreen({
   return (
     <main className="page">
       {view !== 'overview' && (
-        <Button variant="ghost" onClick={() => openView('overview')}>
+        <Button className="back-button" variant="ghost" onClick={() => openView('overview')}>
           <ArrowLeft size={16} /> Back to Progress
         </Button>
       )}
       <div className="page-heading">
         <div>
-          <div className="eyebrow">Your training, over time</div>
           <h1>
             {view === 'overview'
               ? 'Progress'
@@ -2105,7 +2105,6 @@ function ProgressScreen({
           {proposals?.length > 0 && (
             <section className="stack" style={{ marginBottom: 20 }}>
               <div>
-                <div className="eyebrow">Ready to review</div>
                 <h2 style={{ marginTop: 4 }}>Progression suggestions</h2>
               </div>
               {proposals.map((p: Proposal) => (
@@ -2124,11 +2123,16 @@ function ProgressScreen({
               ))}
             </section>
           )}
-          <ExerciseStats stats={stats} unit={data.settings.unit} />
+          <ExerciseStats stats={stats} unit={data.settings.unit} timeZone={timezone} />
         </>
       )}
       {view === 'history' && (
-        <WorkoutHistory items={history} onWorkout={onWorkout} onRepeat={onRepeat} />
+        <WorkoutHistory
+          items={history}
+          timeZone={timezone}
+          onWorkout={onWorkout}
+          onRepeat={onRepeat}
+        />
       )}
     </main>
   );
@@ -2174,7 +2178,6 @@ function CoachScreen({
     >
       <div className="page-heading">
         <div>
-          <div className="eyebrow">Training partner</div>
           <h1>Coach</h1>
         </div>
         <Button variant="secondary" onClick={() => openRoutine()}>
@@ -2349,11 +2352,15 @@ function SettingsScreen({
   return (
     <main className="page data-settings-page">
       <div className="page-heading">
-        <Button variant="ghost" onClick={onBack} aria-label="Back to previous screen">
+        <Button
+          className="back-button"
+          variant="ghost"
+          onClick={onBack}
+          aria-label="Back to previous screen"
+        >
           <ArrowLeft size={17} /> Back
         </Button>
         <div>
-          <div className="eyebrow">Your data and preferences</div>
           <h1>Data &amp; privacy</h1>
         </div>
         <Button variant="secondary" onClick={openSettings}>

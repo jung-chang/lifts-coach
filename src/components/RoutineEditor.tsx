@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowDown, ArrowLeft, ArrowUp, Plus, Search, Sparkles, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowLeft, ArrowUp, Plus, Sparkles, Trash2 } from 'lucide-react';
 import { catalog } from '../../shared/catalog';
 import { fromDisplayWeight, toDisplayWeight, id } from '../../shared/domain';
 import type { AppData, Exercise, TrainingEdit } from '../../shared/types';
@@ -13,6 +13,7 @@ import { Button } from './ui/Button';
 import { Sheet } from './ui/Sheet';
 import { parseRepRange } from '../lib/repRange';
 import { loadModeLabel } from './LoadSemantics';
+import { SearchPicker } from './SearchPicker';
 
 export function RoutineEditor({
   data,
@@ -33,7 +34,6 @@ export function RoutineEditor({
   onSave: () => void;
   onAskCoach: () => void;
 }) {
-  const [search, setSearch] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [customOpen, setCustomOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
@@ -156,11 +156,10 @@ export function RoutineEditor({
   return (
     <main className="page routine-editor-page">
       <header className="routine-editor-header">
-        <Button variant="ghost" onClick={onBack}>
+        <Button variant="ghost" className="back-button" onClick={onBack}>
           <ArrowLeft size={17} /> Back
         </Button>
         <div className="routine-editor-heading">
-          <span className="eyebrow">Train</span>
           <h1>
             {draft.proposalId
               ? 'Review routine draft'
@@ -191,7 +190,6 @@ export function RoutineEditor({
         <div className="routine-editor-section-head">
           <div>
             <h2>Exercises</h2>
-            <p className="muted small">Adjust the plan. Changes are saved together.</p>
           </div>
           <Button variant="ai" onClick={onAskCoach}>
             <Sparkles size={16} /> Ask Coach
@@ -377,29 +375,22 @@ export function RoutineEditor({
                         <ArrowDown size={16} />
                       </Button>
                       {field('Rest (sec)', p.restSeconds, 'rest', 0, 3600)}
-                      <div className="form-field">
-                        <label htmlFor={`replace-${p.id}`}>Replace exercise</label>
-                        <select
-                          id={`replace-${p.id}`}
-                          className="select input-sm"
-                          value={p.exerciseId}
-                          onChange={(e) =>
-                            edit([
-                              {
-                                op: 'replace_exercise',
-                                exerciseId: p.id,
-                                replacementId: e.target.value,
-                              },
-                            ])
-                          }
-                        >
-                          {library.map((item) => (
-                            <option key={item.id} value={item.id}>
-                              {item.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                      <SearchPicker
+                        label="Replace exercise"
+                        triggerLabel="Replace exercise"
+                        value={p.exerciseId}
+                        options={library.map((item) => ({
+                          value: item.id,
+                          label: item.name,
+                          description: `${item.muscles.slice(0, 2).join(', ')} · ${item.equipment}`,
+                          searchText: `${item.name} ${item.muscles.join(' ')} ${item.equipment}`,
+                        }))}
+                        onChange={(replacementId) =>
+                          edit([{ op: 'replace_exercise', exerciseId: p.id, replacementId }])
+                        }
+                        placeholder="Search exercises"
+                        emptyMessage="No matching exercises."
+                      />
                       <div className="form-field">
                         <label htmlFor={`increment-${p.id}`}>
                           Progress increment ({data.settings.unit})
@@ -466,137 +457,112 @@ export function RoutineEditor({
           </p>
         )}
       </div>
-      <Sheet
-        open={pickerOpen}
-        onOpenChange={(open) => {
-          setPickerOpen(open);
-          if (!open) setCustomOpen(false);
+      <SearchPicker
+        label="Add exercise"
+        value=""
+        options={library.map((e) => ({
+          value: e.id,
+          label: e.name,
+          description: `${e.muscles.slice(0, 2).join(', ')} · ${e.equipment}`,
+          searchText: `${e.muscles.join(' ')} ${e.equipment}`,
+        }))}
+        onChange={(exerciseId) => {
+          edit([{ op: 'add_exercise', exerciseId, sets: 3, repRange: [8, 12] }]);
+          setPickerOpen(false);
         }}
-        title={customOpen ? 'Create custom exercise' : 'Add exercise'}
-        description={
-          customOpen
-            ? 'Create an exercise for this routine.'
-            : 'Search the library or add a custom exercise.'
+        placeholder="Search exercises"
+        searchLabel="Search exercises"
+        emptyMessage="No matching exercises."
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        hideTrigger
+        footer={
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setPickerOpen(false);
+              setCustomOpen(true);
+            }}
+          >
+            <Plus size={16} /> Create a custom exercise
+          </Button>
         }
-      >
-        {customOpen ? (
-          <div className="stack routine-custom-form">
-            <div className="profile-grid">
-              {(['name', 'equipment'] as const).map((key) => {
-                const inputId = `custom-${key}`;
-                return (
-                  <div className="form-field" key={key}>
-                    <label htmlFor={inputId}>
-                      {key === 'name' ? 'Exercise name' : 'Equipment'}
-                    </label>
-                    <input
-                      id={inputId}
-                      className="input"
-                      value={custom[key] || ''}
-                      onChange={(e) => setCustom({ ...custom, [key]: e.target.value })}
-                    />
-                  </div>
-                );
-              })}
-              <div className="form-field">
-                <label htmlFor="custom-muscles">Primary muscles</label>
-                <input
-                  id="custom-muscles"
-                  className="input"
-                  value={(custom.muscles || []).join(', ')}
-                  onChange={(e) =>
-                    setCustom({
-                      ...custom,
-                      muscles: e.target.value
-                        .split(',')
-                        .map((x) => x.trim())
-                        .filter(Boolean),
-                    })
-                  }
-                  placeholder="Chest, triceps"
-                />
-              </div>
-              <div className="form-field">
-                <label htmlFor="custom-load-mode">Load type</label>
-                <select
-                  id="custom-load-mode"
-                  className="select"
-                  value={custom.loadMode}
-                  onChange={(e) =>
-                    setCustom({ ...custom, loadMode: e.target.value as Exercise['loadMode'] })
-                  }
-                >
-                  <option value="external">External load</option>
-                  <option value="per-dumbbell">Per dumbbell</option>
-                  <option value="bodyweight">Bodyweight</option>
-                  <option value="assistance">Assistance</option>
-                </select>
-              </div>
+      />
+      <Sheet open={customOpen} onOpenChange={setCustomOpen} title="Create custom exercise">
+        <div className="stack routine-custom-form">
+          <div className="profile-grid">
+            {(['name', 'equipment'] as const).map((key) => {
+              const inputId = `custom-${key}`;
+              return (
+                <div className="form-field" key={key}>
+                  <label htmlFor={inputId}>{key === 'name' ? 'Exercise name' : 'Equipment'}</label>
+                  <input
+                    id={inputId}
+                    className="input"
+                    value={custom[key] || ''}
+                    onChange={(e) => setCustom({ ...custom, [key]: e.target.value })}
+                  />
+                </div>
+              );
+            })}
+            <div className="form-field">
+              <label htmlFor="custom-muscles">Primary muscles</label>
+              <input
+                id="custom-muscles"
+                className="input"
+                value={(custom.muscles || []).join(', ')}
+                onChange={(e) =>
+                  setCustom({
+                    ...custom,
+                    muscles: e.target.value
+                      .split(',')
+                      .map((x) => x.trim())
+                      .filter(Boolean),
+                  })
+                }
+                placeholder="Chest, triceps"
+              />
             </div>
             <div className="form-field">
-              <label htmlFor="custom-instructions">Instructions</label>
-              <textarea
-                id="custom-instructions"
-                className="textarea"
-                value={custom.instructions}
-                onChange={(e) => setCustom({ ...custom, instructions: e.target.value })}
-              />
-            </div>
-            <div className="row">
-              <Button onClick={() => setCustomOpen(false)}>Back to library</Button>
-              <Button variant="primary" onClick={addCustom}>
-                Add exercise
-              </Button>
+              <label htmlFor="custom-load-mode">Load type</label>
+              <select
+                id="custom-load-mode"
+                className="select"
+                value={custom.loadMode}
+                onChange={(e) =>
+                  setCustom({ ...custom, loadMode: e.target.value as Exercise['loadMode'] })
+                }
+              >
+                <option value="external">External load</option>
+                <option value="per-dumbbell">Per dumbbell</option>
+                <option value="bodyweight">Bodyweight</option>
+                <option value="assistance">Assistance</option>
+              </select>
             </div>
           </div>
-        ) : (
-          <>
-            <div className="search-wrap">
-              <Search size={17} />
-              <input
-                className="input"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search exercises"
-                aria-label="Search exercises"
-              />
-            </div>
-            <div className="exercise-results routine-exercise-picker">
-              {library
-                .filter(
-                  (e) =>
-                    !search ||
-                    e.name.toLowerCase().includes(search.toLowerCase()) ||
-                    e.muscles.some((m) => m.toLowerCase().includes(search.toLowerCase())),
-                )
-                .slice(0, 45)
-                .map((e) => (
-                  <button
-                    className="exercise-result"
-                    key={e.id}
-                    onClick={() => {
-                      edit([{ op: 'add_exercise', exerciseId: e.id, sets: 3, repRange: [8, 12] }]);
-                      setPickerOpen(false);
-                      setSearch('');
-                    }}
-                  >
-                    <span className="nav-mini">
-                      <Plus size={16} />
-                    </span>
-                    <span className="grow">
-                      <b>{e.name}</b>
-                      <span className="muted small" style={{ display: 'block', marginTop: 3 }}>
-                        {e.muscles.slice(0, 2).join(', ')} · {e.equipment}
-                      </span>
-                    </span>
-                  </button>
-                ))}
-            </div>
-            <Button variant="secondary" onClick={() => setCustomOpen(true)}>
-              <Plus size={16} /> Create a custom exercise
+          <div className="form-field">
+            <label htmlFor="custom-instructions">Instructions</label>
+            <textarea
+              id="custom-instructions"
+              className="textarea"
+              value={custom.instructions}
+              onChange={(e) => setCustom({ ...custom, instructions: e.target.value })}
+            />
+          </div>
+          <div className="row">
+            <Button
+              onClick={() => {
+                setCustomOpen(false);
+                setPickerOpen(true);
+              }}
+            >
+              Back to library
             </Button>
-          </>
-        )}
+            <Button variant="primary" onClick={addCustom}>
+              Add exercise
+            </Button>
+          </div>
+        </div>
         {validation && (
           <p className="routine-validation" role="alert">
             {validation}

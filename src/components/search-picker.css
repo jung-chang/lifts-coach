@@ -1,0 +1,101 @@
+.search-picker-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+}
+.search-picker-trigger > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.search-picker-trigger > svg {
+  flex: none;
+  color: var(--sub);
+}
+.search-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  height: min(480px, 55dvh);
+}
+.search-picker-input {
+  flex: none;
+  position: relative;
+}
+.search-picker-input .input {
+  padding-right: 48px;
+}
+.search-picker-input input::-webkit-search-cancel-button {
+  display: none;
+}
+.search-picker-clear {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--sub);
+}
+.search-picker-clear svg {
+  position: static;
+}
+.search-picker-count {
+  margin: 0;
+  flex: none;
+}
+.search-picker-results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.search-picker-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 56px;
+  padding: 12px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  background: transparent;
+  text-align: left;
+}
+.search-picker-option:hover {
+  background: var(--muted);
+}
+.search-picker-option > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.search-picker-option > svg {
+  flex: none;
+}
+.search-picker-description {
+  display: block;
+  margin-top: 4px;
+}
+.search-picker-empty {
+  text-align: center;
+  padding: 20px 0;
+}
+.search-picker-footer {
+  flex: none;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}

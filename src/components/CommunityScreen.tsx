@@ -10,6 +10,7 @@ import type {
 import type { AppData, LoadMode, Unit } from '../../shared/types';
 import { catalog } from '../../shared/catalog';
 import { Button } from './ui/Button';
+import { TimezonePicker } from './TimezonePicker';
 import { formatLoadValue } from './LoadSemantics';
 import {
   blockProfile,
@@ -410,8 +411,12 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
   return (
     <main className="page community-page">
       <header className="page-heading community-heading">
-        <div>
-          <span className="eyebrow">Lifts Coach</span>
+        <div className="page-title-group">
+          {view.kind !== 'feed' && (
+            <Button size="icon" variant="ghost" onClick={back} aria-label="Back to previous view">
+              <ArrowLeft size={18} />
+            </Button>
+          )}
           <h1>
             {view.kind === 'feed'
               ? 'Community'
@@ -425,11 +430,6 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
           </h1>
         </div>
         <div className="row community-heading-actions">
-          {view.kind !== 'feed' && (
-            <Button variant="ghost" onClick={back} aria-label="Back to previous view">
-              <ArrowLeft size={17} /> Back
-            </Button>
-          )}
           {(view.kind === 'feed' || view.kind === 'people') && (
             <Button
               variant={view.kind === 'people' ? 'primary' : 'secondary'}
@@ -717,7 +717,7 @@ function ProfileContent({
         <>
           {section !== 'overview' && (
             <>
-              <Button variant="ghost" onClick={() => go('overview')}>
+              <Button className="back-button" variant="ghost" onClick={() => go('overview')}>
                 <ArrowLeft size={16} /> Back to profile
               </Button>
               <h2 className="profile-section-heading">
@@ -734,12 +734,17 @@ function ProfileContent({
           )}
           {section === 'stats' &&
             ((detail.statsVisible ?? detail.scope === 'all-history') ? (
-              <ExerciseStats stats={detail.exerciseStats ?? []} unit={unit} />
+              <ExerciseStats
+                stats={detail.exerciseStats ?? []}
+                unit={unit}
+                timeZone={detail.profile.trainingTimezone}
+              />
             ) : (
               <p className="community-empty">Profile stats are private.</p>
             ))}
           {section === 'history' && (
             <WorkoutHistory
+              timeZone={detail.profile.trainingTimezone}
               items={items.map((w) => ({
                 id: w.id,
                 title: w.title,
@@ -1119,6 +1124,8 @@ export function OwnProfileScreen({
           aria-label="Account settings"
           onClick={() => {
             setError('');
+            setTimezone(session.profile.trainingTimezone);
+            setAutomatic(session.sharing.autoPublishWorkouts);
             setSettings(true);
           }}
         >
@@ -1127,7 +1134,7 @@ export function OwnProfileScreen({
       </header>
       {view !== 'overview' && (
         <>
-          <Button variant="ghost" onClick={() => go('overview')}>
+          <Button className="back-button" variant="ghost" onClick={() => go('overview')}>
             <ArrowLeft size={16} /> Back to profile
           </Button>
           <h2 className="profile-section-heading">
@@ -1164,9 +1171,16 @@ export function OwnProfileScreen({
           </div>
         </>
       )}
-      {view === 'stats' && <ExerciseStats stats={stats} unit={unit} />}
+      {view === 'stats' && (
+        <ExerciseStats stats={stats} unit={unit} timeZone={session.profile.trainingTimezone} />
+      )}
       {view === 'history' && (
-        <WorkoutHistory items={history} onWorkout={(id) => onWorkout?.(id)} onRepeat={onRepeat} />
+        <WorkoutHistory
+          items={history}
+          timeZone={session.profile.trainingTimezone}
+          onWorkout={(id) => onWorkout?.(id)}
+          onRepeat={onRepeat}
+        />
       )}
       {error && (
         <p role="alert" className="community-error-text">
@@ -1216,10 +1230,10 @@ export function OwnProfileScreen({
         title="Account settings"
         description={session.email}
       >
-        <label className="form-field">
-          <span>Training timezone</span>
-          <input className="input" value={timezone} onChange={(e) => setTimezone(e.target.value)} />
-        </label>
+        <div className="form-field">
+          <span className="muted small">Training timezone</span>
+          <TimezonePicker value={timezone} onChange={setTimezone} />
+        </div>
         <label className="community-consent">
           <input
             type="checkbox"

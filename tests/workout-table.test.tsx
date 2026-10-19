@@ -60,7 +60,7 @@ describe('workout set table', () => {
     expect(screen.queryByText('Move exercise')).toBeNull();
     expect(document.querySelector('.workout-focus details')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Replace exercise' }));
-    const search = screen.getByRole('textbox', { name: 'Search replacement exercises' });
+    const search = screen.getByRole('searchbox', { name: 'Search replacement exercises' });
     fireEvent.change(search, { target: { value: 'no such synthetic exercise' } });
     expect(screen.getByText('No exercises found.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));

@@ -94,7 +94,7 @@ describe('integrated editor navigation', () => {
   it('saves a draft then exits without triggering its dirty Back confirmation', async () => {
     startDraft();
     fireEvent.click(screen.getByRole('button', { name: 'Add exercise' }));
-    fireEvent.change(screen.getByRole('textbox', { name: 'Search exercises' }), {
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search exercises' }), {
       target: { value: 'Barbell bench press' },
     });
     fireEvent.click(screen.getByRole('button', { name: /^Barbell bench press.*chest/i }));

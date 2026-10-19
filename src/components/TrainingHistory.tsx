@@ -1,9 +1,10 @@
-import { useId, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import type { Unit, Workout } from '../../shared/types';
 import { toDisplayWeight } from '../../shared/domain';
 import type { ExerciseStat } from '../../shared/trainingStats';
 import { Button } from './ui/Button';
 import { loadModeLabel } from './LoadSemantics';
+import { SearchPicker } from './SearchPicker';
 
 export interface HistoryItem {
   id: string;
@@ -13,6 +14,7 @@ export interface HistoryItem {
   setCount: number;
   notes?: string;
   feeling?: string;
+  trainingDate?: string;
 }
 export function historyItemsFromWorkouts(workouts: Workout[]): HistoryItem[] {
   return workouts
@@ -23,6 +25,7 @@ export function historyItemsFromWorkouts(workouts: Workout[]): HistoryItem[] {
       id: w.id,
       title: w.name,
       date: w.startedAt,
+      trainingDate: w.trainingDate,
       durationMinutes: w.completedAt
         ? Math.max(0, Math.round((Date.parse(w.completedAt) - Date.parse(w.startedAt)) / 60000))
         : null,
@@ -36,14 +39,39 @@ export function historyItemsFromWorkouts(workouts: Workout[]): HistoryItem[] {
     }));
 }
 
-const dateLabel = (date: string) =>
-  new Date(date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+function dateKey(date: string, timeZone?: string) {
+  const value = new Date(date);
+  if (Number.isNaN(value.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(value);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
 
-export function ExerciseStats({ stats, unit }: { stats: ExerciseStat[]; unit: Unit }) {
+const dateLabel = (date: string, timeZone?: string) =>
+  new Date(date).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    timeZone,
+  });
+
+export function ExerciseStats({
+  stats,
+  unit,
+  timeZone,
+}: {
+  stats: ExerciseStat[];
+  unit: Unit;
+  timeZone?: string;
+}) {
   const [selectedKey, setSelectedKey] = useState('');
   const instanceId = useId();
   const headingId = `${instanceId}-exercise-stats-heading`;
-  const selectId = `${instanceId}-training-exercise-stat`;
   const selected =
     stats.find((item) => `${item.exerciseId}:${item.loadMode}` === selectedKey) ?? stats[0];
   const points = selected?.points.slice(-8) ?? [];
@@ -58,33 +86,28 @@ export function ExerciseStats({ stats, unit }: { stats: ExerciseStat[]; unit: Un
     <section className="card card-pad" aria-labelledby={headingId}>
       <div className="row space-between">
         <div>
-          <div className="eyebrow">Strength trend</div>
-          <h2 id={headingId} style={{ marginTop: 4 }}>
-            {selected?.name || 'Exercise progress'}
-          </h2>
+          <h2 id={headingId}>Strength trend</h2>
         </div>
         {selected && (
           <span className="progress-count muted small">{selected.points.length} sessions</span>
         )}
       </div>
       {stats.length > 0 && (
-        <div className="form-field" style={{ marginTop: 12 }}>
-          <label htmlFor={selectId}>Choose an exercise</label>
-          <select
-            id={selectId}
-            className="select"
+        <div style={{ marginTop: 12 }}>
+          <SearchPicker
+            label="Choose an exercise"
+            searchLabel="Search exercises"
             value={selected ? `${selected.exerciseId}:${selected.loadMode}` : ''}
-            onChange={(event) => setSelectedKey(event.target.value)}
-          >
-            {stats.map((item) => (
-              <option
-                key={`${item.exerciseId}:${item.loadMode}`}
-                value={`${item.exerciseId}:${item.loadMode}`}
-              >
-                {item.name} · {loadModeLabel(item.loadMode)}
-              </option>
-            ))}
-          </select>
+            options={stats.map((item) => ({
+              value: `${item.exerciseId}:${item.loadMode}`,
+              label: item.name,
+              description: loadModeLabel(item.loadMode),
+              searchText: `${item.name} ${loadModeLabel(item.loadMode)}`,
+            }))}
+            onChange={setSelectedKey}
+            placeholder="Search exercises"
+            emptyMessage="No matching exercises"
+          />
         </div>
       )}
       {selected && points.length > 1 ? (
@@ -106,7 +129,7 @@ export function ExerciseStats({ stats, unit }: { stats: ExerciseStat[]; unit: Un
                     className="chart-bar"
                     style={{ height: `${Math.max(12, (value / maxValue) * 68)}%` }}
                   />
-                  <span className="chart-label">{dateLabel(point.date)}</span>
+                  <span className="chart-label">{dateLabel(point.date, timeZone)}</span>
                 </div>
               );
             })}
@@ -138,6 +161,7 @@ export function WorkoutHistory({
   onLoadMore,
   loading = false,
   emptyMessage = 'Your training history starts with the first workout.',
+  timeZone,
 }: {
   items: HistoryItem[];
   onWorkout: (id: string) => void;
@@ -145,16 +169,79 @@ export function WorkoutHistory({
   onLoadMore?: () => void;
   loading?: boolean;
   emptyMessage?: string;
+  timeZone?: string;
 }) {
+  const instanceId = useId();
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const filteredItems = useMemo(
+    () =>
+      items.filter((item) => {
+        const day = item.trainingDate || dateKey(item.date, timeZone);
+        return Boolean(day) && (!from || day >= from) && (!to || day <= to);
+      }),
+    [items, from, to, timeZone],
+  );
+  const filtering = Boolean(from || to);
   return (
     <section className="card card-pad" aria-label="Workout history">
-      {items.length === 0 ? (
+      <div className="history-date-filters">
+        <div className="form-field">
+          <label htmlFor={`${instanceId}-history-from`}>From</label>
+          <input
+            id={`${instanceId}-history-from`}
+            className="input"
+            type="date"
+            max={to || undefined}
+            value={from}
+            onChange={(event) => setFrom(event.target.value)}
+          />
+        </div>
+        <div className="form-field">
+          <label htmlFor={`${instanceId}-history-to`}>To</label>
+          <input
+            id={`${instanceId}-history-to`}
+            className="input"
+            type="date"
+            min={from || undefined}
+            value={to}
+            onChange={(event) => setTo(event.target.value)}
+          />
+        </div>
+        {filtering && (
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => {
+              setFrom('');
+              setTo('');
+            }}
+          >
+            Clear dates
+          </Button>
+        )}
+      </div>
+      {from && to && from > to && (
+        <p className="muted small" role="alert">
+          Choose an end date on or after the start date.
+        </p>
+      )}
+      {filtering && onLoadMore && (
+        <p className="muted small" style={{ margin: '0 0 12px' }}>
+          Matches among workouts loaded so far.
+        </p>
+      )}
+      {filteredItems.length === 0 ? (
         <p className="progress-empty muted small">
-          {loading ? 'Loading workout history…' : emptyMessage}
+          {loading
+            ? 'Loading workout history…'
+            : filtering
+              ? 'No workouts match these dates.'
+              : emptyMessage}
         </p>
       ) : (
         <>
-          {items.map((item) => (
+          {filteredItems.map((item) => (
             <div key={item.id} className="history-item" style={{ alignItems: 'flex-start' }}>
               <div className="grow">
                 <div className="row space-between">
@@ -163,7 +250,11 @@ export function WorkoutHistory({
                       <b>{item.title}</b>
                     </button>
                     <div className="muted small" style={{ marginTop: 4 }}>
-                      {dateLabel(item.date)}
+                      <time dateTime={item.trainingDate || item.date}>
+                        {item.trainingDate
+                          ? dateLabel(`${item.trainingDate}T12:00:00Z`, 'UTC')
+                          : dateLabel(item.date, timeZone)}
+                      </time>
                       {item.durationMinutes !== null ? ` · ${item.durationMinutes} min` : ''} ·{' '}
                       {item.setCount} {item.setCount === 1 ? 'set' : 'sets'}
                     </div>
@@ -183,14 +274,14 @@ export function WorkoutHistory({
               </div>
             </div>
           ))}
-          {onLoadMore && (
-            <div style={{ marginTop: 16 }}>
-              <Button onClick={onLoadMore} disabled={loading}>
-                {loading ? 'Loading…' : 'Load more'}
-              </Button>
-            </div>
-          )}
         </>
+      )}
+      {onLoadMore && (
+        <div style={{ marginTop: 16 }}>
+          <Button onClick={onLoadMore} disabled={loading}>
+            {loading ? 'Loading…' : 'Load more'}
+          </Button>
+        </div>
       )}
     </section>
   );
@@ -199,7 +290,6 @@ export function WorkoutHistory({
 export function TrainingLinks({
   onStats,
   onHistory,
-  historyDescription = 'All sessions, corrections and repeat workouts',
 }: {
   onStats: () => void;
   onHistory: () => void;
@@ -210,13 +300,11 @@ export function TrainingLinks({
       <button type="button" onClick={onStats}>
         <span>
           <span>Exercise stats</span>
-          <span className="muted small">Strength trends</span>
         </span>
       </button>
       <button type="button" onClick={onHistory}>
         <span>
           <span>Workout history</span>
-          <span className="muted small">{historyDescription}</span>
         </span>
       </button>
     </div>

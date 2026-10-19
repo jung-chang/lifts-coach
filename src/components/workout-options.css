@@ -33,34 +33,3 @@
   width: auto;
   max-width: 65%;
 }
-.workout-replacement {
-  display: flex;
-  flex-direction: column;
-  height: min(480px, 55dvh);
-  gap: 12px;
-}
-.workout-replacement > button {
-  align-self: flex-start;
-  flex-shrink: 0;
-}
-.workout-replacement > .search-wrap {
-  flex-shrink: 0;
-}
-.workout-replacement > p {
-  margin: 0;
-}
-.workout-replacement-results {
-  min-height: 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-.workout-replacement-meta {
-  display: block;
-  margin-top: 4px;
-}
-.workout-replacement-results .exercise-result {
-  min-height: 64px;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  border-radius: 0;
-}

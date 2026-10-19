@@ -15,7 +15,10 @@ export function Sheet({ open, onOpenChange, title, description, children }: Shee
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="context-sheet-overlay" />
-        <DialogPrimitive.Content className="context-sheet-content">
+        <DialogPrimitive.Content
+          className="context-sheet-content"
+          {...(!description ? { 'aria-describedby': undefined } : {})}
+        >
           <div className="context-sheet-handle" aria-hidden="true">
             <span />
           </div>
