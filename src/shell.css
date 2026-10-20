@@ -57,7 +57,9 @@
 }
 .summary-exercise {
   padding: 24px 0;
-  border-bottom: 1px solid var(--border);
+}
+.summary-exercise + .summary-exercise {
+  border-top: 1px solid var(--border);
 }
 .summary-exercise h2 {
   font-size: 17px;
@@ -85,6 +87,13 @@
   font-size: 11px;
   font-weight: 400;
   color: var(--sub);
+}
+.summary-set-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+.summary-exercise-feedback:has(.multiline),
+.summary-private-notes:has(.multiline) {
+  border-top: 1px solid var(--border);
 }
 .summary-set-table th:nth-child(2) {
   width: 40%;

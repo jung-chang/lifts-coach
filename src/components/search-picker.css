@@ -27,7 +27,7 @@
   flex: 1;
   min-height: 0;
   height: auto;
-  padding: 3px;
+  padding: 12px 6px 6px;
 }
 .context-sheet-content:has(.search-picker) {
   height: min(88dvh, 640px);

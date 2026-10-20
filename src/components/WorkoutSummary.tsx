@@ -107,7 +107,7 @@ export function WorkoutSummary({
                 sets were not performed.
               </p>
             )}
-            {(e.repsInReserve || e.feeling || e.notes) && (
+            {(e.repsInReserve || e.feeling || e.notes?.trim()) && (
               <div className="summary-exercise-feedback">
                 {e.repsInReserve ? (
                   <p className="small">
@@ -120,16 +120,16 @@ export function WorkoutSummary({
                     {e.feeling.charAt(0).toUpperCase() + e.feeling.slice(1)}
                   </p>
                 ) : null}
-                {e.notes && <p className="small multiline">{e.notes}</p>}
+                {e.notes?.trim() && <p className="small multiline">{e.notes}</p>}
               </div>
             )}
           </section>
         ))}
-        {(workout.notes || workout.feeling) && (
+        {(workout.notes?.trim() || workout.feeling) && (
           <div className="summary-private-notes">
             <h3>Workout feedback</h3>
             {workout.feeling && <p>{workout.feeling}</p>}
-            {workout.notes && <p className="multiline">{workout.notes}</p>}
+            {workout.notes?.trim() && <p className="multiline">{workout.notes}</p>}
           </div>
         )}
       </section>
