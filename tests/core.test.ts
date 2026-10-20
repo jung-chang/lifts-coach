@@ -33,6 +33,95 @@ const base = () => {
 };
 
 describe('core domain invariants', () => {
+  it('changes only the requested workout prescription fields without resetting entered or warmup values', () => {
+    let data = base();
+    data = startWorkout(data, data.routines[0].id);
+    const workout = data.workouts[0],
+      exercise = workout.exercises[0];
+    exercise.actualSets[0] = { ...exercise.actualSets[0], weight: 95, reps: 11 };
+    exercise.actualSets.push({
+      ...exercise.actualSets[0],
+      id: 'synthetic-warmup',
+      kind: 'warmup',
+      weight: 45,
+      reps: 5,
+    });
+    const before = structuredClone(exercise.actualSets),
+      routines = structuredClone(data.routines);
+    data = editWorkout(data, workout.id, [
+      { op: 'update_exercise', exerciseId: exercise.id, restSeconds: 180 },
+    ]);
+    expect(data.workouts[0].exercises[0].restSeconds).toBe(180);
+    expect(data.workouts[0].exercises[0].actualSets.map(({ updatedAt, ...set }) => set)).toEqual(
+      before.map(({ updatedAt, ...set }) => set),
+    );
+    data = editWorkout(data, workout.id, [
+      { op: 'update_exercise', exerciseId: exercise.id, targetWeight: 100 },
+    ]);
+    expect(data.workouts[0].exercises[0].actualSets[0]).toMatchObject({ weight: 100, reps: 11 });
+    expect(data.workouts[0].exercises[0].actualSets.at(-1)).toMatchObject({
+      weight: 45,
+      reps: 5,
+      kind: 'warmup',
+    });
+    data = editWorkout(data, workout.id, [
+      { op: 'update_exercise', exerciseId: exercise.id, repRange: [6, 8] },
+    ]);
+    expect(data.workouts[0].exercises[0].actualSets[0]).toMatchObject({ weight: 100, reps: 6 });
+    expect(data.routines).toEqual(routines);
+  });
+
+  it('keeps the next unfinished sets when shrinking a workout and adds usable sets when expanding again', () => {
+    let data = base();
+    data = startWorkout(data, data.routines[0].id);
+    const workout = data.workouts[0],
+      exercise = workout.exercises[0];
+    data = completeSet(data, workout.id, exercise.id, exercise.actualSets[0].id);
+    const completed = structuredClone(data.workouts[0].exercises[0].actualSets[0]);
+    data = editWorkout(data, workout.id, [
+      { op: 'update_exercise', exerciseId: exercise.id, sets: 2 },
+    ]);
+    expect(data.workouts[0].exercises[0].actualSets.map((set) => set.status)).toEqual([
+      'completed',
+      'incomplete',
+      'skipped',
+    ]);
+    data = editWorkout(data, workout.id, [
+      { op: 'update_exercise', exerciseId: exercise.id, sets: 3 },
+    ]);
+    expect(data.workouts[0].exercises[0].actualSets.map((set) => set.status)).toEqual([
+      'completed',
+      'incomplete',
+      'skipped',
+      'incomplete',
+    ]);
+    expect(data.workouts[0].exercises[0].actualSets[0]).toEqual(completed);
+  });
+
+  it('preserves an assistance override when changing a bodyweight exercise prescription', () => {
+    const routine = {
+      ...createRoutine('Synthetic pull-ups'),
+      exercises: [
+        createPrescription(catalog.find((exercise) => exercise.loadMode === 'bodyweight')!.id),
+      ],
+    };
+    let data = startWorkout({ ...emptyData(), routines: [routine] }, routine.id);
+    const workout = data.workouts[0],
+      exercise = workout.exercises[0];
+    data = updateSet(data, workout.id, exercise.id, exercise.actualSets[0].id, (set) => ({
+      ...set,
+      loadMode: 'assistance',
+      weight: 40,
+    }));
+    data = editWorkout(data, workout.id, [
+      { op: 'update_exercise', exerciseId: exercise.id, restSeconds: 120 },
+    ]);
+    expect(data.workouts[0].exercises[0].actualSets[0]).toMatchObject({
+      loadMode: 'assistance',
+      weight: 40,
+    });
+  });
+
   it('discards an active workout without adding history or changing routines', () => {
     let data = base();
     data = startWorkout(data, data.routines[0].id);

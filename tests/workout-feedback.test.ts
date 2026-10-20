@@ -23,6 +23,41 @@ function setup() {
 }
 
 describe('session feedback', () => {
+  it('shows nothing when the previous session has no manually written note, even if an older one does', () => {
+    let data = setup();
+    const first = data.workouts[0],
+      ex = first.exercises[0];
+    data = completeSet(data, first.id, ex.id, ex.actualSets[0].id);
+    data = updateWorkoutFeedback(data, first.id, { notes: 'Synthetic older exercise note' }, ex.id);
+    data = updateWorkoutFeedback(data, first.id, { notes: 'Synthetic older workout note' });
+    data = finishWorkout(data, first.id);
+    data.workouts[0].startedAt = '2026-01-01T12:00:00Z';
+    data = startWorkout(data, data.routines[0].id);
+    const previous = data.workouts[1];
+    data = completeSet(
+      data,
+      previous.id,
+      previous.exercises[0].id,
+      previous.exercises[0].actualSets[0].id,
+    );
+    data = updateWorkoutFeedback(data, previous.id, { notes: '   ' }, previous.exercises[0].id);
+    data = finishWorkout(data, previous.id);
+    data.workouts[1].startedAt = '2026-01-08T12:00:00Z';
+    data = startWorkout(data, data.routines[0].id);
+    const current = data.workouts[2];
+    expect(previousExerciseNote(data, current.id, current.exercises[0].id)).toBeUndefined();
+    expect(previousWorkoutNote(data, current.id)).toBeUndefined();
+    data = updateWorkoutFeedback(
+      data,
+      previous.id,
+      { notes: 'Synthetic manually written note' },
+      previous.exercises[0].id,
+    );
+    expect(previousExerciseNote(data, current.id, current.exercises[0].id)?.notes).toBe(
+      'Synthetic manually written note',
+    );
+  });
+
   it('keeps entries per session, preserves them on finish and starts repeat feedback blank', () => {
     let data = setup();
     const workout = data.workouts[0],
@@ -64,7 +99,7 @@ describe('session feedback', () => {
     );
   });
 
-  it('finds the latest nonempty note across routines, ignores unperformed exercises and future sessions', () => {
+  it('finds the last performed exercise note across routines, ignoring unperformed and future sessions', () => {
     let data = setup();
     const old = data.workouts[0],
       ex = old.exercises[0];

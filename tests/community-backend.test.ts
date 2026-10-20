@@ -792,6 +792,125 @@ describe('community backend authorization and publication', () => {
     ).toHaveLength(0);
     db.db.close();
   });
+  it('withdraws a shared workout when a sync correction removes all completed working sets', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1(),
+      owner = await auth('owner@example.test', 'owner-sub'),
+      member = await auth('member@example.test', 'member-sub'),
+      ownerSession = (await (await call(db, owner, '/api/session')).json()) as any,
+      data = finishedData(),
+      completedWorkingSet = structuredClone(data.workouts[0].exercises[0].actualSets[0]);
+
+    expect(
+      (
+        await call(db, owner, '/api/state', 'PUT', {
+          accountId: ownerSession.accountId,
+          operationId: 'publishable-sync',
+          deviceId: 'device-1',
+          baseRevision: 0,
+          data,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await call(db, owner, '/api/me/workouts/workout-1/visibility', 'PUT', {
+          visibility: 'community',
+          decisionRevision: 0,
+          policyRevision: ownerSession.sharing.policyRevision,
+          audienceAcknowledged: true,
+        })
+      ).status,
+    ).toBe(200);
+    const publishedFeed = ((await (await call(db, member, '/api/community/feed')).json()) as any)
+      .items;
+    expect(publishedFeed).toHaveLength(1);
+    const publicationId = publishedFeed[0].id;
+
+    data.workouts[0].exercises[0].actualSets = [{ ...completedWorkingSet, kind: 'warmup' }];
+    expect(
+      (
+        await call(db, owner, '/api/state', 'PUT', {
+          accountId: ownerSession.accountId,
+          operationId: 'remove-completed-sets',
+          deviceId: 'device-1',
+          baseRevision: 1,
+          data,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      ((await (await call(db, member, '/api/community/feed')).json()) as any).items,
+    ).toHaveLength(0);
+    expect(
+      db.db
+        .prepare(
+          "SELECT visibility,decision_revision decisionRevision FROM workout_visibility WHERE workout_id='workout-1'",
+        )
+        .get(),
+    ).toEqual({ visibility: 'private', decisionRevision: 2 });
+    expect((await call(db, member, `/api/community/workouts/${publicationId}`)).status).toBe(404);
+    const sharedHistory = (await (
+      await call(db, member, `/api/community/profiles/${ownerSession.profile.publicId}/workouts`)
+    ).json()) as any;
+    expect(sharedHistory.items).toHaveLength(0);
+
+    expect(
+      (
+        await call(db, owner, '/api/state', 'PUT', {
+          accountId: ownerSession.accountId,
+          operationId: 'repeat-correction',
+          deviceId: 'device-1',
+          baseRevision: 2,
+          data,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      db.db
+        .prepare(
+          "SELECT visibility,decision_revision decisionRevision FROM workout_visibility WHERE workout_id='workout-1'",
+        )
+        .get(),
+    ).toEqual({ visibility: 'private', decisionRevision: 2 });
+
+    data.workouts[0].exercises[0].actualSets = [completedWorkingSet];
+    expect(
+      (
+        await call(db, owner, '/api/state', 'PUT', {
+          accountId: ownerSession.accountId,
+          operationId: 'restore-working-set',
+          deviceId: 'device-1',
+          baseRevision: 3,
+          data,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      db.db
+        .prepare(
+          "SELECT visibility,decision_revision decisionRevision FROM workout_visibility WHERE workout_id='workout-1'",
+        )
+        .get(),
+    ).toEqual({ visibility: 'private', decisionRevision: 2 });
+    expect(
+      (
+        await call(db, owner, '/api/me/workouts/workout-1/visibility', 'PUT', {
+          visibility: 'community',
+          decisionRevision: 2,
+          policyRevision: ownerSession.sharing.policyRevision,
+          audienceAcknowledged: true,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      ((await (await call(db, member, '/api/community/feed')).json()) as any).items[0].id,
+    ).toBe(publicationId);
+    db.db.close();
+  });
   it('rejects cross-account and missing production sync account identifiers', async () => {
     vi.stubGlobal(
       'fetch',

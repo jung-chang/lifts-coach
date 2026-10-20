@@ -127,6 +127,8 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
   const workoutReturn = useRef<View>({ kind: 'feed' });
   const feedRequest = useRef<AbortController | null>(null);
   const feedGeneration = useRef(0);
+  const feedPages = useRef(1);
+  const feedRetry = useRef({ more: false, revalidate: false });
   const priorAccount = useRef(accountId);
   const accountIdRef = useRef(accountId);
   const viewRef = useRef(view);
@@ -156,7 +158,7 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
   };
 
   const loadFeed = useCallback(
-    async (more = false) => {
+    async (more = false, revalidate = false) => {
       if (!accountId) return;
       if (!isOnline) return;
       feedRequest.current?.abort();
@@ -164,11 +166,19 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
       feedRequest.current = controller;
       const requestGeneration = ++feedGeneration.current;
       const requestAccount = accountId;
-      if (!more) setCursor(null);
+      feedRetry.current = { more, revalidate };
       setFeedLoading(true);
       setFeedError('');
       try {
+        const pageCount = revalidate ? feedPages.current : 1;
         const page = await getFeed(accountId, more ? cursor : null, controller.signal);
+        let fetchedPages = 1;
+        while (fetchedPages < pageCount && page.nextCursor && !controller.signal.aborted) {
+          const next = await getFeed(accountId, page.nextCursor, controller.signal);
+          page.items.push(...next.items);
+          page.nextCursor = next.nextCursor;
+          fetchedPages += 1;
+        }
         if (
           controller.signal.aborted ||
           requestGeneration !== feedGeneration.current ||
@@ -182,6 +192,7 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
           return [...new Map(items.map((item) => [item.id, item])).values()];
         });
         setCursor(page.nextCursor);
+        feedPages.current = more ? feedPages.current + 1 : fetchedPages;
         setFeedFetched(true);
       } catch (error) {
         if (
@@ -218,6 +229,8 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
     feedRequest.current?.abort();
     feedRequest.current = null;
     setFeed([]);
+    feedPages.current = 1;
+    feedScrollY.current = 0;
     setCursor(null);
     setFeedFetched(false);
     setFeedLoading(false);
@@ -239,7 +252,7 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
       if (view.kind !== 'feed') cancelFeedRequest();
       return;
     }
-    void loadFeed(false);
+    void loadFeed(false, true);
     return () => {
       if (feedRequest.current) {
         feedGeneration.current += 1;
@@ -257,6 +270,8 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
       feedRequest.current = null;
       setIsOnline(false);
       setFeed([]);
+      feedPages.current = 1;
+      feedScrollY.current = 0;
       setCursor(null);
       setFeedFetched(false);
       setFeedLoading(false);
@@ -361,11 +376,11 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
     return () => controller.abort();
   }, [accountId, view, session, isOnline]);
   useEffect(() => {
-    if (view.kind !== 'feed' || feedScrollY.current <= 0) return;
+    if (view.kind !== 'feed' || !feedFetched || feedScrollY.current <= 0) return;
     window.requestAnimationFrame(() =>
       window.scrollTo({ top: feedScrollY.current, behavior: 'instant' as ScrollBehavior }),
     );
-  }, [view.kind]);
+  }, [view.kind, feedFetched]);
 
   const openWorkout = (id: string) => {
     workoutReturn.current =
@@ -374,14 +389,19 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
   };
   const onBlock = async () => {
     if (!accountId || view.kind !== 'profile' || !profile) return;
+    const requestView = view;
     try {
       await blockProfile(accountId, view.id, true);
-      setBlocked(true);
-      setProfile(null);
+      if (accountIdRef.current !== accountId || !isOnlineRef.current) return;
+      if (viewRef.current === requestView) {
+        setBlocked(true);
+        setProfile(null);
+      }
       setFeed((items) => items.filter((item) => item.profile.publicId !== view.id));
       setPeople((items) => items.filter((person) => person.publicId !== view.id));
     } catch (error) {
-      setDetailError(error instanceof Error ? error.message : 'Could not block this profile.');
+      if (accountIdRef.current === accountId && viewRef.current === requestView)
+        setDetailError(error instanceof Error ? error.message : 'Could not block this profile.');
     }
   };
   const back = () => {
@@ -462,7 +482,7 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
           {feedError && (
             <Failure
               message={feedError}
-              retry={() => void loadFeed(feed.length > 0 && cursor !== null)}
+              retry={() => void loadFeed(feedRetry.current.more, feedRetry.current.revalidate)}
             />
           )}
           {isOnline && !feedLoading && !feedError && feed.length === 0 && (

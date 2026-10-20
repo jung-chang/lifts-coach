@@ -39,6 +39,157 @@ const jsonResponse = (value: unknown) =>
   });
 
 describe('CommunityScreen', () => {
+  it('revalidates every loaded feed page when returning from a profile', async () => {
+    let firstPageCalls = 0;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/feed')) {
+        if (url.includes('cursor=next'))
+          return jsonResponse({
+            items: [{ ...feedItem, id: 'pub-b', title: 'Older workout' }],
+            nextCursor: null,
+          });
+        firstPageCalls += 1;
+        return jsonResponse({
+          items: [{ ...feedItem, title: firstPageCalls === 1 ? 'Upper body' : 'Updated workout' }],
+          nextCursor: 'next',
+        });
+      }
+      return jsonResponse({
+        profile,
+        scope: 'shared-workouts',
+        weeks: [],
+        records: [],
+        workouts: [],
+      });
+    });
+    render(
+      <CommunityScreen
+        session={session}
+        unit="lb"
+        onSessionChange={() => {}}
+        onSettings={() => {}}
+        onCoach={() => {}}
+      />,
+    );
+    await screen.findByText('Upper body');
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await screen.findByText('Older workout');
+    fireEvent.click(screen.getAllByRole('button', { name: 'Alex Example' })[0]);
+    await screen.findByText('Shared workouts only');
+    fireEvent.click(screen.getByRole('button', { name: 'Back to previous view' }));
+    await screen.findByText('Updated workout');
+    expect(screen.getByText('Older workout')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Load more' })).toBeNull();
+  });
+
+  it('retries a failed refresh from the first page rather than loading the next page', async () => {
+    let firstPageCalls = 0;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      firstPageCalls += 1;
+      if (firstPageCalls === 2) throw new Error('Temporary failure');
+      return jsonResponse({ items: [feedItem], nextCursor: 'next' });
+    });
+    render(
+      <CommunityScreen
+        session={session}
+        unit="lb"
+        onSessionChange={() => {}}
+        onSettings={() => {}}
+        onCoach={() => {}}
+      />,
+    );
+    await screen.findByText('Upper body');
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh feed' }));
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: /Retry/ }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(fetchMock.mock.calls[2][0]).toBe('/api/community/feed');
+  });
+
+  it('ignores a delayed block result after switching accounts', async () => {
+    let resolveBlock: ((response: Response) => void) | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/block'))
+        return new Promise<Response>((resolve) => {
+          resolveBlock = resolve;
+        });
+      if (url.includes('/profiles/'))
+        return jsonResponse({
+          profile,
+          scope: 'shared-workouts',
+          weeks: [],
+          records: [],
+          workouts: [],
+        });
+      const otherAccount =
+        (init?.headers as Record<string, string>)['X-Lifts-Account'] === 'acct-b';
+      return jsonResponse({
+        items: [{ ...feedItem, title: otherAccount ? 'New account workout' : 'Upper body' }],
+        nextCursor: null,
+      });
+    });
+    const props = {
+      unit: 'lb' as const,
+      onSessionChange: () => {},
+      onSettings: () => {},
+      onCoach: () => {},
+    };
+    const mounted = render(<CommunityScreen {...props} session={session} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Alex Example' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Block profile' }));
+    await waitFor(() => expect(resolveBlock).toBeTypeOf('function'));
+    mounted.rerender(<CommunityScreen {...props} session={{ ...session, accountId: 'acct-b' }} />);
+    await screen.findByText('New account workout');
+    resolveBlock?.(jsonResponse({ ok: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByText('New account workout')).toBeTruthy();
+  });
+
+  it('keeps the current profile visible when a previous profile block finishes late', async () => {
+    let resolveBlock: ((response: Response) => void) | undefined;
+    const secondProfile = { ...profile, publicId: 'person-b', displayName: 'Sam Example' };
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/block'))
+        return new Promise<Response>((resolve) => {
+          resolveBlock = resolve;
+        });
+      if (url.includes('/profiles/'))
+        return jsonResponse({
+          profile: url.endsWith('/person-b') ? secondProfile : profile,
+          scope: 'shared-workouts',
+          weeks: [],
+          records: [],
+          workouts: [],
+        });
+      return jsonResponse({
+        items: [feedItem, { ...feedItem, id: 'pub-b', profile: secondProfile }],
+        nextCursor: null,
+      });
+    });
+    render(
+      <CommunityScreen
+        session={session}
+        unit="lb"
+        onSessionChange={() => {}}
+        onSettings={() => {}}
+        onCoach={() => {}}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Alex Example' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Block profile' }));
+    await waitFor(() => expect(resolveBlock).toBeTypeOf('function'));
+    fireEvent.click(screen.getByRole('button', { name: 'Back to previous view' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Sam Example' }));
+    await screen.findByRole('heading', { name: 'Sam Example' });
+    resolveBlock?.(jsonResponse({ ok: true }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(screen.getByRole('heading', { name: 'Sam Example' })).toBeTruthy();
+    expect(screen.queryByText(/This profile is blocked/)).toBeNull();
+  });
+
   it('links a feed name to profile and the workout area to read-only expanded set detail', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = String(input);

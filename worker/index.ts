@@ -386,12 +386,22 @@ async function rebuildProjection(
         `UPDATE sharing_settings SET summary_enabled=0,auto_publish_workouts=0,workout_sharing_enabled_at=NULL,audience_acknowledged_at=NULL,policy_revision=policy_revision+1,updated_at=? WHERE account_id=? AND ${currentGuard}`,
       ).bind(now, accountId, accountId, revision),
     );
-  else
+  else {
+    // A previously shared workout can be explicitly corrected after sync. If
+    // that correction removes every completed working set, withdraw its public
+    // visibility before retaining (or creating) a publication row.
+    final.push(
+      env.DB.prepare(
+        "UPDATE workout_visibility SET visibility='private',decision_revision=decision_revision+1,updated_at=? WHERE account_id=? AND visibility='community' AND NOT EXISTS(SELECT 1 FROM training_sets ts WHERE ts.account_id=workout_visibility.account_id AND ts.workout_id=workout_visibility.workout_id AND ts.kind='working') AND " +
+          currentGuard,
+      ).bind(now, accountId, accountId, revision),
+    );
     final.push(
       env.DB.prepare(
         "INSERT INTO workout_publications(account_id,workout_id,id,activity_at,published_at) SELECT tw.account_id,tw.workout_id,lower(hex(randomblob(16))),tw.completed_at,? FROM training_workouts tw JOIN workout_visibility v USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=tw.account_id AND ast.revision=ps.source_revision WHERE tw.account_id=? AND v.visibility='community' AND ps.source_revision=? AND EXISTS(SELECT 1 FROM training_sets ts WHERE ts.account_id=tw.account_id AND ts.workout_id=tw.workout_id AND ts.kind='working') ON CONFLICT(account_id,workout_id) DO NOTHING",
       ).bind(now, accountId, revision),
     );
+  }
   await env.DB.batch([...statements, ...final]);
 }
 app.get('/api/session', async (c) => c.json(await getSession(c.env, c.get('accountId'))));

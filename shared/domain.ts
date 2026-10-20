@@ -542,11 +542,10 @@ export function previousExerciseNote(data: AppData, workoutId: string, exerciseI
   for (const w of priorWorkouts(data, current)) {
     const match = w.exercises.find(
       (e) =>
-        e.exerciseId === exercise.exerciseId &&
-        e.notes?.trim() &&
-        e.actualSets.some((s) => s.status === 'completed'),
+        e.exerciseId === exercise.exerciseId && e.actualSets.some((s) => s.status === 'completed'),
     );
-    if (match) return { notes: match.notes!, startedAt: w.startedAt };
+    if (match)
+      return match.notes?.trim() ? { notes: match.notes, startedAt: w.startedAt } : undefined;
   }
   return undefined;
 }
@@ -554,12 +553,10 @@ export function previousExerciseNote(data: AppData, workoutId: string, exerciseI
 export function previousWorkoutNote(data: AppData, workoutId: string) {
   const current = data.workouts.find((w) => w.id === workoutId);
   if (!current) return undefined;
-  const match = priorWorkouts(data, current).find(
-    (w) =>
-      (current.routineId ? w.routineId === current.routineId : w.name === current.name) &&
-      w.notes?.trim(),
+  const match = priorWorkouts(data, current).find((w) =>
+    current.routineId ? w.routineId === current.routineId : w.name === current.name,
   );
-  return match ? { notes: match.notes!, startedAt: match.startedAt } : undefined;
+  return match?.notes?.trim() ? { notes: match.notes, startedAt: match.startedAt } : undefined;
 }
 
 function priorWorkouts(data: AppData, current: Workout) {
@@ -960,24 +957,29 @@ export function editWorkout(data: AppData, workoutId: string, edits: TrainingEdi
         previous = workout.exercises[index],
         prescription = applyEdits([previous], [edit], library)[0],
         sets = previous.actualSets.map((s) =>
-          s.status !== 'incomplete'
+          s.status !== 'incomplete' || s.kind !== 'working'
             ? s
             : {
                 ...s,
-                weight: prescription.targetWeight,
-                reps: prescription.repRange[0],
-                loadMode: prescription.loadMode,
+                weight: edit.targetWeight === undefined ? s.weight : prescription.targetWeight,
+                reps: edit.repRange === undefined ? s.reps : prescription.repRange[0],
                 updatedAt: now(),
               },
         );
       let remaining =
         prescription.sets -
-        sets.filter((s) => s.kind === 'working' && s.status !== 'incomplete').length;
-      for (let i = sets.length - 1; i >= 0; i--)
-        if (remaining <= 0 && sets[i].kind === 'working' && sets[i].status === 'incomplete')
-          sets[i] = { ...sets[i], status: 'skipped', updatedAt: now() };
-        else if (sets[i].kind === 'working' && sets[i].status === 'incomplete') remaining--;
-      while (sets.filter((s) => s.kind === 'working').length < prescription.sets)
+        sets.filter((s) => s.kind === 'working' && s.status === 'completed').length;
+      if (edit.sets !== undefined)
+        for (let i = 0; i < sets.length; i++)
+          if (sets[i].kind === 'working' && sets[i].status === 'incomplete') {
+            if (remaining <= 0) sets[i] = { ...sets[i], status: 'skipped', updatedAt: now() };
+            else remaining--;
+          }
+      while (
+        edit.sets !== undefined &&
+        sets.filter((s) => s.kind === 'working' && s.status !== 'skipped').length <
+          prescription.sets
+      )
         sets.push({
           id: id('set'),
           weight: prescription.targetWeight,
