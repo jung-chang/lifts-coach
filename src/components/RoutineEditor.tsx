@@ -172,6 +172,17 @@ export function RoutineEditor({
         </div>
         <div className="routine-editor-header-actions">
           <span className="muted small">{dirty ? 'Unsaved changes' : 'Up to date'}</span>
+          {canCoach && (
+            <Button
+              variant="ai"
+              size="icon"
+              aria-label="Ask Coach"
+              title="Ask Coach"
+              onClick={onAskCoach}
+            >
+              <Sparkles size={17} />
+            </Button>
+          )}
           <Button variant="primary" onClick={requestSave}>
             {draft.proposalId ? 'Approve and save' : 'Save routine'}
           </Button>
@@ -193,11 +204,6 @@ export function RoutineEditor({
           <div>
             <h2>Exercises</h2>
           </div>
-          {canCoach && (
-            <Button variant="ai" onClick={onAskCoach}>
-              <Sparkles size={16} /> Ask Coach
-            </Button>
-          )}
         </div>
         {draft.routine.exercises.length === 0 ? (
           <div className="card card-pad routine-empty-draft">

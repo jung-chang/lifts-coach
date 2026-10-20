@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { coachReply } from '../worker/coach';
 import { coachSelection } from '../shared/coachSelection';
-import { applyProposal, createPrescription, createRoutine, emptyData } from '../shared/domain';
+import {
+  applyProposal,
+  createPrescription,
+  createRoutine,
+  emptyData,
+  startWorkout,
+  finishWorkout,
+  updateWorkoutFeedback,
+} from '../shared/domain';
 import { catalog } from '../shared/catalog';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -60,6 +68,48 @@ function assertStrictSchema(node: any) {
 }
 
 describe('Coach provider integration', () => {
+  it('excludes private session notes from active and historical provider context', async () => {
+    const captured = mockOpenAI({ text: 'Ready to help.', evidenceIds: [], proposals: [] });
+    const routine = {
+      ...createRoutine('Synthetic privacy routine'),
+      exercises: [createPrescription(catalog[0].id)],
+    };
+    let data = startWorkout({ ...emptyData(), routines: [routine] }, routine.id);
+    const prior = data.workouts[0];
+    data = updateWorkoutFeedback(data, prior.id, { notes: 'private historical workout note' });
+    data = updateWorkoutFeedback(
+      data,
+      prior.id,
+      { notes: 'private historical exercise note' },
+      prior.exercises[0].id,
+    );
+    data = finishWorkout(data, prior.id);
+    data = startWorkout(data, routine.id);
+    const active = data.workouts[1];
+    data = updateWorkoutFeedback(data, active.id, { notes: 'private active workout note' });
+    data = updateWorkoutFeedback(
+      data,
+      active.id,
+      { notes: 'private active exercise note', repsInReserve: '0' },
+      active.exercises[0].id,
+    );
+    const before = structuredClone(data);
+    await coachReply(env, data, request);
+    const sent = JSON.stringify(captured().input);
+    for (const note of [prior, active].flatMap((w) => {
+      const saved = data.workouts.find((item) => item.id === w.id)!;
+      return [saved.notes!, saved.exercises[0].notes!];
+    }))
+      expect(sent).not.toContain(note);
+    expect(sent).toContain('Synthetic privacy routine');
+    expect(sent).toContain(catalog[0].id);
+    const context = JSON.parse(
+      captured().input.find((item: any) => item.role === 'user').content[0].text,
+    ).context;
+    expect(context.activeWorkout.exercises[0].repsInReserve).toBe('0');
+    expect(data).toEqual(before);
+  });
+
   it('defaults blank model settings and sends a strict-compatible schema through the real SDK', async () => {
     const captured = mockOpenAI({
       text: 'What equipment do you have?',

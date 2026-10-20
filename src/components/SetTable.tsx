@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Plus } from 'lucide-react';
+import { Button } from './ui/Button';
 import { fromDisplayWeight, toDisplayWeight } from '../../shared/domain';
 import type { WorkoutExercise, WorkoutSet } from '../../shared/types';
 import { loadModeLabel } from './LoadSemantics';
@@ -12,6 +14,7 @@ type Props = {
   unit: Unit;
   onEdit: (set: WorkoutSet, patch: Partial<WorkoutSet>) => void;
   onDone: (setId: string, done: boolean, patch?: Partial<WorkoutSet>) => void;
+  onAdd?: () => void;
 };
 
 function parseInput(field: Field, value: string, unit: Unit): number | null {
@@ -26,7 +29,7 @@ function parseInput(field: Field, value: string, unit: Unit): number | null {
   }
 }
 
-export function SetTable({ exercise, unit, onEdit, onDone }: Props) {
+export function SetTable({ exercise, unit, onEdit, onDone, onAdd }: Props) {
   // Persisted values come directly from props. Only actual input edits enter
   // this buffer; an acknowledged edit therefore cannot mask later Undo/sync.
   const [drafts, setDrafts] = useState<Drafts>({});
@@ -161,9 +164,10 @@ export function SetTable({ exercise, unit, onEdit, onDone }: Props) {
                   {ordinal}
                 </th>
                 <td className="tablecolload">
-                  {mode !== exercise.loadMode && (
-                    <span className="set-table-mode-hint">{loadModeLabel(mode)}</span>
-                  )}
+                  {mode !== exercise.loadMode &&
+                    !['bodyweight', 'assistance'].includes(exercise.loadMode) && (
+                      <span className="set-table-mode-hint">{loadModeLabel(mode)}</span>
+                    )}
                   <input
                     data-set-input={`${set.id}-weight`}
                     className="input"
@@ -181,6 +185,19 @@ export function SetTable({ exercise, unit, onEdit, onDone }: Props) {
                       }
                     }}
                   />
+                  {['bodyweight', 'assistance'].includes(exercise.loadMode) && (
+                    <select
+                      className="select set-load-mode"
+                      aria-label={`Set ${ordinal} load mode`}
+                      value={mode}
+                      onChange={(event) =>
+                        onEdit(set, { loadMode: event.target.value as WorkoutSet['loadMode'] })
+                      }
+                    >
+                      <option value="bodyweight">Added weight</option>
+                      <option value="assistance">Assistance</option>
+                    </select>
+                  )}
                 </td>
                 <td className="tablecolreps">
                   <input
@@ -216,6 +233,22 @@ export function SetTable({ exercise, unit, onEdit, onDone }: Props) {
             );
           })}
         </tbody>
+        {onAdd && (
+          <tfoot>
+            <tr>
+              <td colSpan={4}>
+                <Button
+                  variant="ghost"
+                  aria-label="Add set"
+                  title="Add set for today"
+                  onClick={onAdd}
+                >
+                  <Plus size={18} aria-hidden="true" />
+                </Button>
+              </td>
+            </tr>
+          </tfoot>
+        )}
       </table>
       {invalidCount > 0 && (
         <div className="set-table-validation" role="status">

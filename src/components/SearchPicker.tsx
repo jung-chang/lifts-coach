@@ -31,6 +31,7 @@ export function SearchPicker({
   onOpenChange,
   hideTrigger = false,
   triggerLabel,
+  triggerIcon,
 }: {
   label: string;
   value: string;
@@ -45,6 +46,7 @@ export function SearchPicker({
   onOpenChange?: (open: boolean) => void;
   hideTrigger?: boolean;
   triggerLabel?: string;
+  triggerIcon?: ReactNode;
 }) {
   const [localOpen, setLocalOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -80,7 +82,7 @@ export function SearchPicker({
           onClick={() => changeOpen(true)}
         >
           <span>{triggerLabel || selected?.label || label}</span>
-          <Search size={17} aria-hidden="true" />
+          {triggerIcon ?? <Search size={17} aria-hidden="true" />}
         </button>
       )}
       <Sheet open={open} onOpenChange={changeOpen} title={label} description={description}>

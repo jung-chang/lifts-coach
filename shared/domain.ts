@@ -288,6 +288,9 @@ export function repeatWorkout(data: AppData, workoutId: string): AppData {
     exercises: old.exercises.map((e) => ({
       ...clone(e),
       id: id('rx'),
+      notes: undefined,
+      feeling: undefined,
+      repsInReserve: undefined,
       actualSets: e.actualSets.map((s) => ({
         id: id('set'),
         weight: s.weight,
@@ -491,6 +494,85 @@ export function skipSet(
     completedAt: undefined,
   }));
 }
+/** Feedback belongs to this session snapshot and uses the normal durable transaction. */
+export function updateWorkoutFeedback(
+  data: AppData,
+  workoutId: string,
+  feedback: { notes?: string; feeling?: string; repsInReserve?: WorkoutExercise['repsInReserve'] },
+  exerciseId?: string,
+): AppData {
+  const workout = data.workouts.find((w) => w.id === workoutId);
+  assert(workout, 'Workout not found');
+  assert(feedback.notes === undefined || typeof feedback.notes === 'string', 'Invalid notes');
+  assert(feedback.feeling === undefined || typeof feedback.feeling === 'string', 'Invalid feeling');
+  const updated = clone(workout);
+  const exercise =
+    exerciseId === undefined ? undefined : updated.exercises.find((e) => e.id === exerciseId);
+  if (exerciseId !== undefined) {
+    assert(exercise, 'Workout exercise not found');
+    assert(
+      feedback.feeling === undefined || ['easy', 'good', 'hard'].includes(feedback.feeling),
+      'Invalid exercise feeling',
+    );
+  }
+  if ('repsInReserve' in feedback) {
+    assert(exercise, 'Effort belongs to an exercise');
+    assert(
+      feedback.repsInReserve === undefined || ['3+', '1-2', '0'].includes(feedback.repsInReserve),
+      'Invalid reps in reserve',
+    );
+    exercise.repsInReserve = feedback.repsInReserve;
+  }
+  if ('notes' in feedback) (exercise ?? updated).notes = feedback.notes;
+  if ('feeling' in feedback) {
+    if (exercise) exercise.feeling = feedback.feeling as WorkoutExercise['feeling'];
+    else updated.feeling = feedback.feeling;
+  }
+  updated.updatedAt = now();
+  return {
+    ...data,
+    workouts: data.workouts.map((w) => (w.id === workoutId ? updated : w)),
+  };
+}
+
+export function previousExerciseNote(data: AppData, workoutId: string, exerciseId: string) {
+  const current = data.workouts.find((w) => w.id === workoutId);
+  const exercise = current?.exercises.find((e) => e.id === exerciseId);
+  if (!current || !exercise) return undefined;
+  for (const w of priorWorkouts(data, current)) {
+    const match = w.exercises.find(
+      (e) =>
+        e.exerciseId === exercise.exerciseId &&
+        e.notes?.trim() &&
+        e.actualSets.some((s) => s.status === 'completed'),
+    );
+    if (match) return { notes: match.notes!, startedAt: w.startedAt };
+  }
+  return undefined;
+}
+
+export function previousWorkoutNote(data: AppData, workoutId: string) {
+  const current = data.workouts.find((w) => w.id === workoutId);
+  if (!current) return undefined;
+  const match = priorWorkouts(data, current).find(
+    (w) =>
+      (current.routineId ? w.routineId === current.routineId : w.name === current.name) &&
+      w.notes?.trim(),
+  );
+  return match ? { notes: match.notes!, startedAt: match.startedAt } : undefined;
+}
+
+function priorWorkouts(data: AppData, current: Workout) {
+  return data.workouts
+    .filter(
+      (w) =>
+        w.id !== current.id &&
+        w.status === 'finished' &&
+        Date.parse(w.startedAt) <= Date.parse(current.startedAt),
+    )
+    .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+}
+
 export function finishWorkout(
   data: AppData,
   workoutId: string,
@@ -514,8 +596,8 @@ export function finishWorkout(
             updatedAt: stamp,
             restEndsAt: undefined,
             restSetId: undefined,
-            feeling,
-            notes,
+            feeling: feeling ?? w.feeling,
+            notes: notes ?? w.notes,
             exercises: w.exercises.map((e) => ({
               ...e,
               actualSets: e.actualSets.map((s) =>
@@ -834,7 +916,6 @@ export function editWorkout(data: AppData, workoutId: string, edits: TrainingEdi
           targetWeight: 0,
           restSeconds: old.restSeconds,
           name: replacement.name,
-          notes: old.notes,
           actualSets: Array.from({ length: count }, () => ({
             id: id('set'),
             weight: 0,
@@ -1182,6 +1263,8 @@ export function validateBackup(input: unknown): AppData {
       !text(w.name) ||
       !w.name ||
       !text(w.startedAt) ||
+      (w.notes !== undefined && !text(w.notes)) ||
+      (w.feeling !== undefined && !text(w.feeling)) ||
       Number.isNaN(Date.parse(w.startedAt)) ||
       !['active', 'finished'].includes(w.status) ||
       !Array.isArray(w.exercises) ||
@@ -1202,6 +1285,9 @@ export function validateBackup(input: unknown): AppData {
         !record(e) ||
         !e.exerciseId ||
         !e.name ||
+        (e.notes !== undefined && !text(e.notes)) ||
+        (e.feeling !== undefined && !['easy', 'good', 'hard'].includes(e.feeling)) ||
+        (e.repsInReserve !== undefined && !['3+', '1-2', '0'].includes(e.repsInReserve)) ||
         !Array.isArray(e.actualSets) ||
         !modes.includes(e.loadMode)
       )

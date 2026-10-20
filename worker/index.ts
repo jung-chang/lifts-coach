@@ -15,7 +15,6 @@ interface Env extends ProviderEnv {
   ACCESS_TEAM_DOMAIN?: string;
   ACCESS_AUD?: string;
   LOCAL_DEV?: string;
-  COACH_OWNER_EMAIL?: string;
 }
 type Variables = { accountId: string; coachEnabled: boolean };
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -64,11 +63,8 @@ async function resolveAccount(
 ) {
   const now = new Date().toISOString(),
     normalized = identity.email.trim().toLowerCase();
-  const coach =
-    identity.local ||
-    (!!env.COACH_OWNER_EMAIL && env.COACH_OWNER_EMAIL.trim().toLowerCase() === normalized)
-      ? 1
-      : 0;
+  // Every active account admitted through Access can use the provisioned Coach.
+  const coach = 1;
   const found = await env.DB.prepare(
     'SELECT id,email,email_normalized emailNormalized,status,coach_enabled FROM accounts WHERE access_issuer = ? AND access_subject = ?',
   )

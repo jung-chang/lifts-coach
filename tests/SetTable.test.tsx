@@ -14,6 +14,21 @@ function getExercise() {
 afterEach(cleanup);
 
 describe('SetTable input drafts', () => {
+  it('keeps added-weight and assistance selection available directly in bodyweight rows', () => {
+    const source = getExercise();
+    const exercise = {
+      ...source,
+      loadMode: 'bodyweight' as const,
+      actualSets: source.actualSets.map((set) => ({ ...set, loadMode: 'bodyweight' as const })),
+    };
+    const onEdit = vi.fn();
+    render(<SetTable exercise={exercise} unit="lb" onEdit={onEdit} onDone={vi.fn()} />);
+    fireEvent.change(screen.getByRole('combobox', { name: 'Set 1 load mode' }), {
+      target: { value: 'assistance' },
+    });
+    expect(onEdit).toHaveBeenCalledWith(exercise.actualSets[0], { loadMode: 'assistance' });
+  });
+
   it('shows persisted Undo values after an edited load has been acknowledged', async () => {
     const exercise = getExercise();
     const onEdit = vi.fn(),

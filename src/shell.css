@@ -206,7 +206,6 @@
     margin-top: auto;
     padding-top: 42px;
   }
-  .sidebar-coach,
   .sidebar-profile {
     display: flex;
     align-items: center;
@@ -219,10 +218,6 @@
     text-align: left;
     color: var(--ai);
     font-size: 13px;
-  }
-  .sidebar-coach.active {
-    text-decoration: underline;
-    text-underline-offset: 5px;
   }
   .sidebar-profile {
     color: var(--text);

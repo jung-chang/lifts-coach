@@ -139,17 +139,24 @@ describe('integrated editor navigation', () => {
     await waitFor(() => expect(fixture.data.routines).toHaveLength(0));
   });
 
-  it('preserves a changed draft when contextual Coach tries to open another routine', async () => {
+  it('preserves and resumes a changed draft while using full Coach', async () => {
     startDraft();
     fireEvent.click(screen.getByRole('button', { name: 'Ask Coach' }));
-    const sheet = screen.getByRole('dialog');
-    fireEvent.click(within(sheet).getByRole('button', { name: 'Build a routine' }));
-    expect(within(sheet).getByRole('alert').textContent).toContain(
-      'Save or discard your current draft',
+    expect(screen.getByRole('heading', { name: 'Coach' })).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'Message Coach' })).toHaveProperty(
+      'value',
+      expect.stringContaining('Help improve this unsaved routine draft'),
     );
-    fireEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Build a routine' }));
+    expect(screen.getByRole('alert').textContent).toContain('Save or discard your current draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Train' }));
     expect(screen.getByLabelText('Routine name')).toHaveProperty('value', 'Synthetic push plan');
+    expect(screen.getByText('Unsaved changes')).toBeTruthy();
     expect(fixture.update).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Ask Coach' }));
+    fireEvent.popState(window);
+    expect(screen.getByLabelText('Routine name')).toHaveProperty('value', 'Synthetic push plan');
+    expect(screen.queryByRole('dialog', { name: 'Discard routine changes?' })).toBeNull();
   });
 
   it('saves a draft then exits without triggering its dirty Back confirmation', async () => {

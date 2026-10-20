@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { exportJWK, generateKeyPair, SignJWT } from 'jose';
 import worker from '../worker/index';
-import { emptyData } from '../shared/domain';
+import { emptyData, createRoutine, createPrescription, applyProposal } from '../shared/domain';
 import { catalog } from '../shared/catalog';
 
 class TestD1 {
@@ -92,7 +92,7 @@ async function call(
   path: string,
   method = 'GET',
   body?: unknown,
-  coachOwnerEmail = 'enabled@example.test',
+  providerEnv: Record<string, string> = {},
 ) {
   return worker.fetch(
     new Request(`https://app.example.test${path}`, {
@@ -108,7 +108,7 @@ async function call(
       ASSETS: {} as never,
       ACCESS_TEAM_DOMAIN: issuer,
       ACCESS_AUD: aud,
-      COACH_OWNER_EMAIL: coachOwnerEmail,
+      ...providerEnv,
     } as never,
     {} as ExecutionContext,
   );
@@ -132,6 +132,9 @@ function finishedData() {
           id: 'instance-1',
           exerciseId: 'ex_barbell-bench-press',
           name: 'Bench press',
+          notes: 'synthetic private exercise note',
+          feeling: 'hard',
+          repsInReserve: '0',
           sets: 3,
           repRange: [8, 10],
           targetWeight: 100,
@@ -157,6 +160,108 @@ function finishedData() {
 }
 
 describe('community backend authorization and publication', () => {
+  it('lets any admitted member generate a routine through the provider and save only after approval', async () => {
+    const routine = {
+      ...createRoutine('Synthetic AI routine'),
+      exercises: [createPrescription(catalog[0].id)],
+    };
+    let providerRequests = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url, init) => {
+        if (String(url).includes('/cdn-cgi/access/certs')) return Response.json(jwks);
+        providerRequests++;
+        const payload = JSON.parse(init.body);
+        expect(payload.model).toBe('gpt-5-mini');
+        return Response.json({
+          id: 'resp_synthetic_member',
+          created_at: 1,
+          model: payload.model,
+          status: 'completed',
+          output: [
+            {
+              id: 'msg_synthetic_member',
+              type: 'message',
+              role: 'assistant',
+              status: 'completed',
+              content: [
+                {
+                  type: 'output_text',
+                  text: JSON.stringify({
+                    text: 'Review this routine before saving.',
+                    evidenceIds: [],
+                    proposals: [
+                      {
+                        scope: 'routine',
+                        targetId: routine.id,
+                        edits: [],
+                        rationale: 'Requested routine',
+                        evidenceIds: [],
+                        routineDraft: routine,
+                        preference: null,
+                        customExercise: null,
+                      },
+                    ],
+                  }),
+                  annotations: [],
+                },
+              ],
+            },
+          ],
+          usage: { input_tokens: 20, output_tokens: 30, total_tokens: 50 },
+        });
+      }),
+    );
+    const db = new TestD1();
+    try {
+      const member = await auth('ordinary-member@example.test', 'ordinary-ai-member');
+      const providerEnv = { OPENAI_API_KEY: 'synthetic-test-key' };
+      const session = (await (await call(db, member, '/api/session')).json()) as any;
+      expect(session.coachEnabled).toBe(true);
+      const available = await call(db, member, '/api/providers', 'GET', undefined, providerEnv);
+      expect((await available.json()) as any).toEqual([
+        { id: 'openai', models: ['gpt-5-mini', 'gpt-4.1-mini'] },
+      ]);
+      const response = await call(
+        db,
+        member,
+        '/api/coach/chat',
+        'POST',
+        { message: 'Create a bench press routine', provider: 'openai', model: '' },
+        providerEnv,
+      );
+      expect(response.status).toBe(200);
+      const result = (await response.json()) as any;
+      expect(providerRequests).toBe(1);
+      expect(result.proposals[0].routineDraft.name).toBe(routine.name);
+      const state = ((await (await call(db, member, '/api/state')).json()) as any).data;
+      expect(state.routines).toEqual([]);
+      const approved = applyProposal(
+        { ...state, proposals: result.proposals },
+        result.proposals[0].id,
+        [0],
+      );
+      expect(approved.routines[0]).toMatchObject({
+        id: routine.id,
+        name: routine.name,
+        exercises: routine.exercises,
+      });
+      const saved = await call(db, member, '/api/state', 'PUT', {
+        accountId: session.accountId,
+        operationId: 'save-ai-routine',
+        deviceId: 'synthetic-device',
+        baseRevision: 0,
+        data: approved,
+      });
+      expect(saved.status).toBe(200);
+      expect(
+        ((await (await call(db, member, '/api/state')).json()) as any).data.routines[0].name,
+      ).toBe(routine.name);
+    } finally {
+      db.db.close();
+    }
+  });
+
   it('sets up each new profile once without sharing training or changing another account', async () => {
     vi.stubGlobal(
       'fetch',
@@ -371,11 +476,12 @@ describe('community backend authorization and publication', () => {
     const db = new TestD1(),
       token = await auth('sharing@example.test', 'sharing-subject');
     const session = (await (await call(db, token, '/api/session')).json()) as any;
-    expect(session.coachEnabled).toBe(false);
+    expect(session.coachEnabled).toBe(true);
     expect(await (await call(db, token, '/api/providers')).json()).toEqual([]);
-    expect((await call(db, token, '/api/coach/chat', 'POST', { message: 'hello' })).status).toBe(
-      403,
-    );
+    expect(
+      (await call(db, token, '/api/coach/chat', 'POST', { message: 'hello', provider: 'openai' }))
+        .status,
+    ).toBe(400);
     const enabled = (await (
       await call(db, token, '/api/me/sharing', 'PATCH', {
         summaryEnabled: false,
@@ -451,23 +557,21 @@ describe('community backend authorization and publication', () => {
     const initial = await call(db, original, '/api/session');
     expect(initial.status).toBe(200);
     const permitted = (await initial.json()) as any;
-    expect(permitted.coachEnabled).toBe(false);
-    db.db.prepare('UPDATE accounts SET coach_enabled=1 WHERE id=?').run(permitted.accountId);
+    expect(permitted.coachEnabled).toBe(true);
+    db.db.prepare('UPDATE accounts SET coach_enabled=0 WHERE id=?').run(permitted.accountId);
     expect(((await (await call(db, original, '/api/session')).json()) as any).coachEnabled).toBe(
-      false,
+      true,
     );
     const enabled = await auth('enabled@example.test', 'enabled-subject');
     expect(((await (await call(db, enabled, '/api/session')).json()) as any).coachEnabled).toBe(
       true,
     );
     expect(
-      ((await (await call(db, enabled, '/api/session', 'GET', undefined, '')).json()) as any)
+      ((await (await call(db, enabled, '/api/session', 'GET', undefined, {})).json()) as any)
         .coachEnabled,
-    ).toBe(false);
+    ).toBe(true);
     const other = await auth('other@example.test', 'other-subject');
-    expect(((await (await call(db, other, '/api/session')).json()) as any).coachEnabled).toBe(
-      false,
-    );
+    expect(((await (await call(db, other, '/api/session')).json()) as any).coachEnabled).toBe(true);
     expect(
       (await call(db, await auth('second@example.test', 'stable-subject'), '/api/session')).status,
     ).toBe(403);
@@ -498,7 +602,7 @@ describe('community backend authorization and publication', () => {
     const ownerSession = await call(db, owner, '/api/session');
     expect(ownerSession.status).toBe(200);
     const os = (await ownerSession.json()) as any;
-    expect(os.coachEnabled).toBe(false);
+    expect(os.coachEnabled).toBe(true);
     expect(os.sharing.autoPublishWorkouts).toBe(false);
     let consent = await call(db, owner, '/api/me/sharing', 'PATCH', {
       summaryEnabled: false,
@@ -508,7 +612,7 @@ describe('community backend authorization and publication', () => {
     });
     expect(consent.status).toBe(200);
     const optedIn = (await consent.json()) as any;
-    expect(optedIn.coachEnabled).toBe(false);
+    expect(optedIn.coachEnabled).toBe(true);
     const data = finishedData();
     const prior = structuredClone(data.workouts[0]);
     prior.id = 'pre-consent-workout';
@@ -539,6 +643,8 @@ describe('community backend authorization and publication', () => {
     expect(page.items[0].title).toMatch(/^Workout · /);
     expect(page.items[0].setCount).toBe(1);
     expect(page.items[0].exerciseNames).toEqual(['Barbell bench press']);
+    expect(JSON.stringify(page)).not.toContain('private note');
+    expect(JSON.stringify(page)).not.toContain('synthetic private exercise note');
     const sharedProfile = await call(db, member, `/api/community/profiles/${os.profile.publicId}`);
     const sharedProfileBody = (await sharedProfile.json()) as any;
     expect(sharedProfileBody.scope).toBe('shared-workouts');
@@ -546,6 +652,26 @@ describe('community backend authorization and publication', () => {
     expect(sharedProfileBody.records).toHaveLength(0);
     expect(sharedProfileBody.exerciseStats).toEqual([]);
     expect(sharedProfileBody.workouts).toHaveLength(1);
+    expect(JSON.stringify(sharedProfileBody)).not.toContain('private note');
+    expect(JSON.stringify(sharedProfileBody)).not.toContain('synthetic private exercise note');
+    const profileHistory = await call(
+      db,
+      member,
+      `/api/community/profiles/${os.profile.publicId}/workouts`,
+    );
+    expect(profileHistory.status).toBe(200);
+    const profileHistoryBody = await profileHistory.json();
+    expect(JSON.stringify(profileHistoryBody)).not.toContain('private note');
+    expect(JSON.stringify(profileHistoryBody)).not.toContain('synthetic private exercise note');
+    const ownerState = await call(db, owner, '/api/state');
+    expect(ownerState.status).toBe(200);
+    const ownData = ((await ownerState.json()) as any).data;
+    expect(ownData.workouts[0].notes).toBe('private note');
+    expect(ownData.workouts[0].exercises[0].notes).toBe('synthetic private exercise note');
+    const memberState = await call(db, member, '/api/state');
+    const memberData = await memberState.json();
+    expect(JSON.stringify(memberData)).not.toContain('private note');
+    expect(JSON.stringify(memberData)).not.toContain('synthetic private exercise note');
     expect(
       db.db
         .prepare("SELECT visibility FROM workout_visibility WHERE workout_id='pre-consent-workout'")
@@ -589,6 +715,11 @@ describe('community backend authorization and publication', () => {
       loadMode: 'external',
     });
     expect(JSON.stringify(detail)).not.toContain('private note');
+    expect(detail).not.toHaveProperty('notes');
+    expect(detail.exercises[0]).not.toHaveProperty('notes');
+    expect(detail.exercises[0]).not.toHaveProperty('feeling');
+    expect(detail.exercises[0]).not.toHaveProperty('repsInReserve');
+    expect(JSON.stringify(detail)).not.toContain('synthetic private exercise note');
     expect(JSON.stringify(detail)).not.toContain('owner@example.test');
     const privateDecision = await call(db, owner, '/api/me/workouts/workout-1/visibility', 'PUT', {
       visibility: 'private',
@@ -694,7 +825,7 @@ describe('community backend authorization and publication', () => {
     db.db.close();
   });
 
-  it('maps a verified legacy subject without losing state or granting Coach permission', async () => {
+  it('maps a verified legacy subject without losing state and enables Coach for the active member', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => Response.json(jwks)),
@@ -721,7 +852,7 @@ describe('community backend authorization and publication', () => {
     const response = await call(db, token, '/api/session');
     expect(response.status).toBe(200);
     const session = (await response.json()) as any;
-    expect(session.coachEnabled).toBe(false);
+    expect(session.coachEnabled).toBe(true);
     expect(session.accountId).toMatch(/^[0-9a-f-]{36}$/);
     const state = await call(db, token, '/api/state');
     expect(((await state.json()) as any).revision).toBe(4);

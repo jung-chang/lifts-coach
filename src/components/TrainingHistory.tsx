@@ -260,7 +260,7 @@ export function WorkoutHistory({
                     </div>
                   </div>
                   {onRepeat && (
-                    <Button size="sm" variant="secondary" onClick={() => onRepeat(item.id)}>
+                    <Button size="sm" variant="primary" onClick={() => onRepeat(item.id)}>
                       Repeat
                     </Button>
                   )}

@@ -2,7 +2,15 @@ import 'fake-indexeddb/auto';
 import { IDBFactory } from 'fake-indexeddb';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppData, SyncRequest } from '../shared/types';
-import { emptyData, createRoutine } from '../shared/domain';
+import {
+  emptyData,
+  createRoutine,
+  createPrescription,
+  startWorkout,
+  updateWorkoutFeedback,
+  finishWorkout,
+} from '../shared/domain';
+import { catalog } from '../shared/catalog';
 
 // Exercise the real store persistence/queue code without needing a rendered React tree.
 vi.mock('react', () => ({
@@ -155,6 +163,42 @@ describe('durable local store synchronization', () => {
     await waitForSync();
     expect(remote.data.routines[0].name).toBe('Recovered after reload');
     expect(remote.revision).toBe(1);
+  });
+
+  it('recovers session notes and ratings offline and syncs them after reload', async () => {
+    const routine = {
+      ...createRoutine('Synthetic feedback routine'),
+      exercises: [createPrescription(catalog[0].id)],
+    };
+    await useStore().update((data) => startWorkout({ ...data, routines: [routine] }, routine.id));
+    const workout = useStore().data!.workouts[0];
+    await useStore().update((data) =>
+      updateWorkoutFeedback(
+        data,
+        workout.id,
+        { notes: 'Synthetic exercise note', feeling: 'good', repsInReserve: '1-2' },
+        workout.exercises[0].id,
+      ),
+    );
+    await useStore().update((data) =>
+      updateWorkoutFeedback(data, workout.id, { notes: 'Synthetic workout note' }),
+    );
+    vi.resetModules();
+    events = new EventTarget();
+    vi.stubGlobal('window', events);
+    useStore = (await import('../src/lib/store')).useAppStore;
+    const recovered = JSON.parse(await useStore().exportData()).workouts[0];
+    expect(recovered.notes).toBe('Synthetic workout note');
+    expect(recovered.exercises[0].notes).toBe('Synthetic exercise note');
+    expect(recovered.exercises[0].feeling).toBe('good');
+    expect(recovered.exercises[0].repsInReserve).toBe('1-2');
+    await useStore().update((data) => finishWorkout(data, workout.id));
+    reconnect();
+    await waitForSync();
+    expect(remote.data.workouts[0].notes).toBe('Synthetic workout note');
+    expect(remote.data.workouts[0].exercises[0].feeling).toBe('good');
+    expect(remote.data.workouts[0].exercises[0].repsInReserve).toBe('1-2');
+    expect(new Set(requests.map((request) => request.operationId)).size).toBe(4);
   });
 
   it('persists multiple offline mutations and replays consecutive revisions', async () => {

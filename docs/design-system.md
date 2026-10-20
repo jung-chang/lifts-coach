@@ -48,6 +48,12 @@ Responsive controls favor readable values over extra buttons. Active and correct
 
 ## Semantics and boundaries
 
+Exercise feedback is collapsed under "Notes (optional)" and contains a text note and compact Easy/Good/Hard choices under "How did this exercise feel?" Prior exercise notes stay visible when collapsed. Overall workout notes and ratings appear only after Finish workout. Ratings use quiet text buttons with 44px touch targets instead of a wide pill track. Notes stay private, save per session, and are excluded from automatic Coach context and shared responses. Previously saved reps-in-reserve entries remain readable without converting them into qualitative ratings. Repeat starts fresh feedback and uses the same primary button style as Start workout and Finish workout.
+
+Coach is available to every active admitted account through provisioned server-side providers. It has one entry icon in the top-right header on each screen, opening the full Coach view with active-workout context when available. Routine editing uses the same single icon in its dedicated header and retains the unsaved draft while Coach is open; Train or browser Back resumes the draft. Remove duplicate sidebar, workout-title and Progress Coach actions. Proposal origin labels can still identify actual model-generated content.
+
+Exercise Options is removed entirely. The exercise-name picker uses a switch/replace icon and opens replacement search directly; Previous/Next navigates the existing workout. A plus button below the logged rows adds a working set for today only. Added-weight/assistance selection stays inline with the relevant set load, and sharing is chosen after Finish. The elapsed workout timer counts up in minutes and seconds from the saved start timestamp. Search drawers constrain their body to the viewport, keep the focused search field fully visible, and scroll only the result list.
+
 Green `#347A55` confirms completed sets; muted red `#B64E45` identifies destructive/reject actions. AI uses a restrained violet icon/label `#685781`, not purple surfaces. Pending Coach proposals identify their origin explicitly. Deterministic progression uses olive/yellow neutrals and never AI branding. Do not recolor every region or muscle group.
 
 The redesign changes presentation only. Preserve local-first transactions, snapshot/history boundaries, explicit Coach approval, numerical units, durable queues, backups and authenticated Worker configuration. Never add fake user metrics, history or provider responses for visual polish.

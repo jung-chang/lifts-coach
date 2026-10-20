@@ -27,8 +27,8 @@ a public launch. Icons and a manifest alone do not establish production readines
 ## Confirmed beta direction
 
 - Invite-only beta for a small group; no public signup for the first release.
-- Launch tracking first; add AI for other users later. Enforce this on the server,
-  not only by hiding Coach controls. Preserve the owner's provisioned Coach access.
+- The owner's later instruction enables Coach for every active admitted member,
+  using provisioned server-side providers. Disabled and unauthenticated accounts remain denied.
 - Support both iPhone/Safari and Android/Chrome.
 
 ## Remaining setup decisions
@@ -51,12 +51,10 @@ verified. Use synthetic accounts and isolated preview data for all checks.
   verified account ownership. Legacy unowned history stays separate until an
   explicit claim; account switching and sign-out invalidate delayed requests.
   Rehearse the migration and shared-device experience before invitations.
-- Implemented: server-side Coach entitlement in `accounts.coach_enabled`. The
-  optional private Worker secret `COACH_OWNER_EMAIL` grants access only to its
-  matching verified Access email; all other real accounts remain tracking-only.
-  CI provisions it from the same-named GitHub secret without placing its value
-  in source or generated configuration. Legacy history never grants permission.
-  The basic request throttle is not a spending budget.
+- Implemented: every active account admitted by Access receives Coach access on
+  its next authenticated request, including existing accounts. Provider keys remain
+  Worker secrets; the old owner-email restriction is no longer used. Legacy history
+  never grants account access. The basic request throttle is not a spending budget.
 - Verify two accounts cannot read, write, restore, sync, or send Coach context
   belonging to each other. Exercise account switching on a shared browser and
   installed app, logout/revocation, offline local data ownership, and deletion.

@@ -40,6 +40,8 @@ export interface WorkoutExercise extends Prescription {
   name: string;
   actualSets: WorkoutSet[];
   notes?: string;
+  feeling?: 'easy' | 'good' | 'hard';
+  repsInReserve?: '3+' | '1-2' | '0';
 }
 export interface Workout {
   id: string;

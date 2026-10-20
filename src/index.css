@@ -583,6 +583,89 @@ b,
 .workout-exercise-card {
   border-radius: 20px;
 }
+.workout-feedback {
+  margin-top: 12px;
+}
+.exercise-notes > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 44px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 14px;
+}
+.exercise-notes > summary::-webkit-details-marker {
+  display: none;
+}
+.exercise-notes[open] > summary > svg {
+  transform: rotate(180deg);
+}
+.exercise-notes-content {
+  padding-top: 12px;
+}
+.compact-set-table .set-load-mode {
+  min-height: 44px;
+  width: 100%;
+  padding: 0 4px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+.workout-feedback .feedback-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+}
+.feedback-rating-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  padding: 0;
+  background: transparent;
+}
+.feedback-rating-button {
+  min-width: 54px;
+  min-height: 44px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--sub);
+  background: transparent;
+  font-size: 13px;
+  font-weight: 400;
+}
+.feedback-rating-button.selected {
+  border-color: var(--border);
+  color: var(--text);
+  background: var(--surface);
+}
+.feedback-rating-button:focus-visible {
+  outline: 2px solid var(--olive);
+  outline-offset: 2px;
+}
+.workout-feedback .form-field {
+  margin: 0;
+}
+.workout-feedback .textarea {
+  min-height: 72px;
+}
+.workout-feedback .form-field + .form-field {
+  margin-top: 12px;
+}
+.previous-exercise-note {
+  margin: 10px 0 0;
+  overflow-wrap: anywhere;
+}
+.workout-note {
+  margin-top: 12px;
+}
+.summary-exercise-feedback {
+  padding: 10px 0 0;
+  overflow-wrap: anywhere;
+}
+.summary-exercise-feedback p {
+  margin: 3px 0;
+}
 .workout-exercise-tab {
   min-height: 44px;
   padding: 0 13px;

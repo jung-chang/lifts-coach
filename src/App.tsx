@@ -3,6 +3,8 @@ import {
   Activity,
   ArrowLeft,
   ArrowRight,
+  ArrowLeftRight,
+  ChevronDown,
   BarChart3,
   CheckCircle2,
   Clock3,
@@ -38,6 +40,9 @@ import {
   id,
   replaceWorkoutExercise,
   deleteRoutine,
+  updateWorkoutFeedback,
+  previousExerciseNote,
+  previousWorkoutNote,
 } from '../shared/domain';
 import { catalog } from '../shared/catalog';
 import { coachSelection } from '../shared/coachSelection';
@@ -60,7 +65,6 @@ import { Sheet } from './components/ui/Sheet';
 import { RoutineEditor } from './components/RoutineEditor';
 import { ProfileSetup } from './components/ProfileSetup';
 import { SetTable } from './components/SetTable';
-import { WorkoutOptions } from './components/WorkoutOptions';
 import { SearchPicker } from './components/SearchPicker';
 import { FirstRunOnboarding } from './components/FirstRunOnboarding';
 import { formatLoadValue } from './components/LoadSemantics';
@@ -178,8 +182,6 @@ function App() {
     exerciseId?: string;
   }>({});
   const [timerNow, setTimerNow] = useState(Date.now());
-  const [finishFeeling, setFinishFeeling] = useState('');
-  const [finishNotes, setFinishNotes] = useState('');
   const [summaryWorkout, setSummaryWorkout] = useState<Workout | null>(null);
   const [proposalSelection, setProposalSelection] = useState<Record<string, number[]>>({});
   const [backupPreview, setBackupPreview] = useState<AppData | null>(null);
@@ -372,7 +374,16 @@ function App() {
     }
   };
   useEffect(() => {
-    if (!editorDraft || !editorVisible) return;
+    if (!editorDraft) return;
+    if (!editorVisible) {
+      const resumeDraft = () => {
+        pushRoutineEditorHistory();
+        setEditorVisible(true);
+        setTab('train');
+      };
+      window.addEventListener('popstate', resumeDraft);
+      return () => window.removeEventListener('popstate', resumeDraft);
+    }
     const unlisten = listenForRoutineEditorBack({
       isDirty: () => hasRoutineDraftChanges(editorDraft, editorName),
       onDiscardRequest: () => setDiscardRequested(true),
@@ -449,11 +460,11 @@ function App() {
       say((e as Error).message);
     }
   };
-  const openCoach = (ctx: typeof context = {}, sheet = false) => {
+  const openCoach = (ctx: typeof context = {}) => {
     if (!canCoach) return;
     setContext(ctx);
-    setModal(sheet ? 'coach-sheet' : '');
-    if (!sheet) setTab('coach');
+    setModal('');
+    setTab('coach');
   };
   const submitChat = async () => {
     if (!data || !chatText.trim() || chatBusy) return;
@@ -600,7 +611,27 @@ function App() {
     }
     void safeUpdate((d) => ({
       ...d,
-      workouts: d.workouts.map((w) => (w.id === targetId ? prior : w)),
+      workouts: d.workouts.map((w) =>
+        w.id === targetId
+          ? {
+              ...prior,
+              notes: w.notes,
+              feeling: w.feeling,
+              updatedAt: new Date().toISOString(),
+              exercises: prior.exercises.map((e) => {
+                const current = w.exercises.find((item) => item.id === e.id);
+                return current
+                  ? {
+                      ...e,
+                      notes: current.notes,
+                      feeling: current.feeling,
+                      repsInReserve: current.repsInReserve,
+                    }
+                  : e;
+              }),
+            }
+          : w,
+      ),
     }));
     setUndo(null);
     say('Undone');
@@ -618,8 +649,6 @@ function App() {
       if (ok) {
         setWorkoutId(null);
         setUndo(null);
-        setFinishFeeling('');
-        setFinishNotes('');
         if (finishedSnapshot) setSummaryWorkout(finishedSnapshot);
         setModal('summary');
         say(
@@ -629,6 +658,20 @@ function App() {
         );
       }
     });
+  };
+  const saveFinishedWorkoutFeedback = async (
+    targetWorkoutId: string,
+    feedback: { notes?: string; feeling?: string },
+  ) => {
+    let updatedWorkout: Workout | undefined;
+    const ok = await safeUpdate((d) => {
+      const next = updateWorkoutFeedback(d, targetWorkoutId, feedback);
+      updatedWorkout = next.workouts.find((item) => item.id === targetWorkoutId);
+      return next;
+    });
+    if (ok && updatedWorkout)
+      setSummaryWorkout((current) => (current?.id === targetWorkoutId ? updatedWorkout! : current));
+    return ok;
   };
   const discardActiveWorkout = () => {
     const targetId = discardWorkoutRequested;
@@ -845,7 +888,11 @@ function App() {
                 variant="ghost"
                 size="icon"
                 aria-label="Ask Coach"
-                onClick={() => openCoach()}
+                onClick={() =>
+                  openCoach(
+                    active ? { workoutId: active.id, exerciseId: activeExercise?.exerciseId } : {},
+                  )
+                }
               >
                 <Sparkles size={19} />
               </Button>
@@ -887,7 +934,9 @@ function App() {
               `Help improve this unsaved routine draft: ${editorName || 'New routine'}\nExercises: ${editorDraft.routine.exercises.map((p) => allExercises(data).find((e) => e.id === p.exerciseId)?.name || p.exerciseId).join(', ') || 'none yet'}`,
             );
             setChatError('');
-            setModal('coach-sheet');
+            setModal('');
+            setEditorVisible(false);
+            setTab('coach');
           }}
         />
       ) : (
@@ -1048,7 +1097,7 @@ function App() {
                                   min · {completedSets(w)} sets
                                 </div>
                               </button>
-                              <Button size="sm" variant="secondary" onClick={() => repeat(w.id)}>
+                              <Button size="sm" variant="primary" onClick={() => repeat(w.id)}>
                                 <RotateCcw size={15} /> Repeat
                               </Button>
                             </div>
@@ -1075,36 +1124,20 @@ function App() {
                   skipRest={skipRest}
                   finish={finish}
                   requestDiscard={() => setDiscardWorkoutRequested(workout!.id)}
-                  onCoach={() =>
-                    openCoach(
-                      { workoutId: workout!.id, exerciseId: activeExercise?.exerciseId },
-                      true,
-                    )
-                  }
-                  canCoach={canCoach}
                   setUndo={undoLast}
                   undo={undo}
                   say={say}
                   mutate={mutate}
-                  saveVisibility={(visibility: 'private' | 'community') =>
-                    safeUpdate((d) => ({
-                      ...d,
-                      workouts: d.workouts.map((w) =>
-                        w.id === workout!.id && w.status === 'active'
-                          ? {
-                              ...w,
-                              communityVisibility: {
-                                visibility,
-                                policyRevision: session?.sharing.policyRevision ?? 0,
-                              },
-                              updatedAt: new Date().toISOString(),
-                            }
-                          : w,
-                      ),
-                    }))
+                  saveFeedback={(
+                    feedback: {
+                      notes?: string;
+                      feeling?: string;
+                      repsInReserve?: '3+' | '1-2' | '0';
+                    },
+                    exerciseId?: string,
+                  ) =>
+                    safeUpdate((d) => updateWorkoutFeedback(d, workout!.id, feedback, exerciseId))
                   }
-                  session={session}
-                  syncStatus={status}
                 />
               )}
             </main>
@@ -1120,8 +1153,6 @@ function App() {
               view={progressView}
               setView={setProgressView}
               onWorkout={openOwnWorkout}
-              canCoach={canCoach}
-              onCoach={() => openCoach()}
               onRepeat={repeat}
               onCorrection={(w: Workout, e: WorkoutExercise) =>
                 setCorrection({ workout: w, exercise: e })
@@ -1297,14 +1328,6 @@ function App() {
             </button>
           ))}
           <div className="sidebar-account">
-            {canCoach && (
-              <button
-                className={`sidebar-coach${tab === 'coach' ? ' active' : ''}`}
-                onClick={() => openCoach()}
-              >
-                <Sparkles size={18} /> Ask Coach
-              </button>
-            )}
             <button
               className="sidebar-profile"
               onClick={() => {
@@ -1699,33 +1722,21 @@ function App() {
               onLocalChange={async () => false}
             />
           )}
-          <div className="form-field">
-            <label>
-              How did it feel? <span className="muted">(optional)</span>
-            </label>
-            <div className="toggle-row">
-              {['Easy', 'Good', 'Hard'].map((x) => (
-                <button
-                  key={x}
-                  className={finishFeeling === x ? 'selected' : ''}
-                  onClick={() => setFinishFeeling(finishFeeling === x ? '' : x)}
-                >
-                  {x}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="form-field">
-            <label>
-              Notes <span className="muted">(optional)</span>
-            </label>
-            <textarea
-              className="textarea"
-              value={finishNotes}
-              onChange={(e) => setFinishNotes(e.target.value)}
-              placeholder="Anything to remember next time?"
+          {summaryWorkout && (
+            <WorkoutFeeling
+              key={summaryWorkout.id}
+              workout={summaryWorkout}
+              onSave={(feeling) => saveFinishedWorkoutFeedback(summaryWorkout.id, { feeling })}
             />
-          </div>
+          )}
+          {summaryWorkout && (
+            <WorkoutNote
+              key={`${summaryWorkout.id}:notes`}
+              workout={summaryWorkout}
+              previousNote={data ? previousWorkoutNote(data, summaryWorkout.id) : undefined}
+              onSave={(notes) => saveFinishedWorkoutFeedback(summaryWorkout.id, { notes })}
+            />
+          )}
           <div className="dialog-footer">
             <Button
               onClick={() => {
@@ -1734,28 +1745,6 @@ function App() {
               }}
             >
               Done
-            </Button>
-            <Button
-              variant="success"
-              onClick={() => {
-                if (summaryWorkout)
-                  void safeUpdate((d) => ({
-                    ...d,
-                    workouts: d.workouts.map((w) =>
-                      w.id === summaryWorkout.id
-                        ? {
-                            ...w,
-                            feeling: finishFeeling || undefined,
-                            notes: finishNotes || undefined,
-                          }
-                        : w,
-                    ),
-                  }));
-                setModal('');
-                setSummaryWorkout(null);
-              }}
-            >
-              Save feedback
             </Button>
           </div>
         </div>
@@ -1809,32 +1798,6 @@ function App() {
           </div>
         )}
       </Dialog>
-      {canCoach && (
-        <Dialog
-          open={modal === 'coach-sheet'}
-          onOpenChange={(o) => !o && setModal('')}
-          title="Coach"
-          description={
-            editorVisible ? 'Routine draft context included' : 'Workout context included'
-          }
-        >
-          <CoachScreen
-            data={data}
-            syncStatus={status}
-            chatText={chatText}
-            setChatText={setChatText}
-            submit={submitChat}
-            busy={chatBusy}
-            error={chatError}
-            proposals={data.proposals.filter((p: Proposal) => p.status === 'pending')}
-            selection={proposalSelection}
-            setSelection={setProposalSelection}
-            apply={applyPending}
-            reject={(p: Proposal) => mutate((d) => rejectProposal(d, p.id))}
-            openRoutine={openRoutine}
-          />
-        </Dialog>
-      )}
     </div>
   );
 }
@@ -1851,18 +1814,15 @@ function WorkoutScreen({
   skipRest,
   finish,
   requestDiscard,
-  onCoach,
-  canCoach = true,
   setUndo,
   undo,
   say,
   mutate,
-  saveVisibility,
-  session,
-  syncStatus,
+  saveFeedback,
 }: any) {
   const unit = data.settings.unit;
   const ex = activeExercise as WorkoutExercise | undefined;
+  const elapsedSeconds = Math.max(0, Math.floor((timerNow - Date.parse(workout.startedAt)) / 1000));
   const restLeft = workout.restEndsAt
     ? Math.max(0, Math.ceil((workout.restEndsAt - timerNow) / 1000))
     : 0;
@@ -1882,6 +1842,15 @@ function WorkoutScreen({
         w.id === workout.id ? { ...w, restEndsAt: Date.now() + seconds * 1000 } : w,
       ),
     }));
+  const priorExerciseNote = ex ? previousExerciseNote(data, workout.id, ex.id) : undefined;
+  const saveExerciseFeedback = (feedback: {
+    notes?: string;
+    feeling?: string;
+    repsInReserve?: '3+' | '1-2' | '0';
+  }) => {
+    if (!ex) return;
+    void saveFeedback(feedback, ex.id);
+  };
   return (
     <div className="workout-focus">
       <div className="page-heading">
@@ -1889,17 +1858,6 @@ function WorkoutScreen({
           <h1>{workout.name}</h1>
         </div>
         <div className="row">
-          {canCoach && (
-            <Button
-              variant="ai"
-              size="sm"
-              aria-label="Ask Coach about this workout"
-              onClick={onCoach}
-            >
-              <Sparkles size={16} />
-              <span className="desktop-only">Coach</span>
-            </Button>
-          )}
           <div className="row workout-completion-actions">
             <Button variant="primary" onClick={finish}>
               Finish workout
@@ -1921,7 +1879,9 @@ function WorkoutScreen({
         <span>
           {completedSets(workout)} of {totalSets(workout)} working sets
         </span>
-        <span>{duration(workout.startedAt)} min</span>
+        <span role="timer" aria-label="Workout elapsed time">
+          {Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, '0')}
+        </span>
       </div>
       <div className="workout-progress">
         <span
@@ -1938,34 +1898,25 @@ function WorkoutScreen({
                 <div className="eyebrow">
                   Exercise {currentEx + 1} of {workout.exercises.length}
                 </div>
-                {workout.exercises.length > 1 ? (
-                  <SearchPicker
-                    label="Switch exercise"
-                    searchLabel="Search workout exercises"
-                    value={ex.id}
-                    options={workout.exercises.map((item: WorkoutExercise, index: number) => {
-                      const source = allExercises(data).find(
-                        (candidate) => candidate.id === item.exerciseId,
-                      );
-                      return {
-                        value: item.id,
-                        label: item.name,
-                        description: `${index + 1} of ${workout.exercises.length} · ${item.actualSets.filter((set) => set.kind === 'working' && set.status === 'completed').length} of ${item.actualSets.filter((set) => set.kind === 'working').length} sets done`,
-                        searchText: `${source?.muscles.join(' ') || ''} ${source?.equipment || ''}`,
-                      };
-                    })}
-                    onChange={(exerciseId) =>
-                      setCurrentEx(
-                        workout.exercises.findIndex(
-                          (item: WorkoutExercise) => item.id === exerciseId,
-                        ),
-                      )
-                    }
-                    placeholder="Search this workout"
-                  />
-                ) : (
-                  <h2 style={{ marginTop: 5 }}>{ex.name}</h2>
-                )}
+                <SearchPicker
+                  key={ex.id}
+                  label="Replace exercise"
+                  searchLabel="Search replacement exercises"
+                  value={ex.exerciseId}
+                  triggerLabel={ex.name}
+                  triggerIcon={<ArrowLeftRight size={17} aria-hidden="true" />}
+                  options={allExercises(data)
+                    .filter((item) => item.id !== ex.exerciseId)
+                    .map((item) => ({
+                      value: item.id,
+                      label: item.name,
+                      description: `${item.muscles.join(', ')} · ${item.equipment}`,
+                    }))}
+                  description={`For today only.${ex.actualSets.some((set) => set.status === 'completed') ? ' Completed sets stay with the original exercise; the replacement is added next.' : ''}`}
+                  onChange={replaceToday}
+                  placeholder="Name, muscle, or equipment"
+                  emptyMessage="No exercises found."
+                />
                 <span className="muted small">
                   {formatLoadValue(ex.loadMode, toDisplayWeight(ex.targetWeight, unit), unit)} ·{' '}
                   target {ex.sets} × {ex.repRange[0]}–{ex.repRange[1]}
@@ -2000,6 +1951,18 @@ function WorkoutScreen({
             unit={unit}
             onEdit={(set, patch) => editSet(ex.id, set, patch)}
             onDone={(setId, done, patch) => toggleDone(ex.id, setId, done, patch)}
+            onAdd={() =>
+              mutate(
+                (d: AppData) => addWorkoutSet(d, workout.id, ex.id, 'working'),
+                'Working set added',
+              )
+            }
+          />
+          <ExerciseFeedback
+            key={`${workout.id}:${ex.id}:${ex.exerciseId}`}
+            exercise={ex}
+            previousNote={priorExerciseNote}
+            onSave={saveExerciseFeedback}
           />
           <div className="row space-between mobile-workout-navigation">
             <Button
@@ -2018,27 +1981,6 @@ function WorkoutScreen({
               Next <ArrowRight size={16} />
             </Button>
           </div>
-          <WorkoutOptions
-            key={ex.id}
-            exercise={ex}
-            library={allExercises(data)}
-            onAddSet={(kind) =>
-              mutate(
-                (d: AppData) => addWorkoutSet(d, workout.id, ex.id, kind),
-                kind === 'warmup' ? 'Warm-up set added' : 'Set added',
-              )
-            }
-            onReplace={replaceToday}
-            onEditSet={(set, loadMode) => editSet(ex.id, set, { loadMode })}
-            visibility={
-              <WorkoutVisibilityControl
-                session={session}
-                workout={workout}
-                synced={syncStatus === 'synced'}
-                onLocalChange={saveVisibility}
-              />
-            }
-          />
         </>
       ) : (
         <div className="empty-state">
@@ -2049,14 +1991,181 @@ function WorkoutScreen({
   );
 }
 
+function ExerciseFeedback({
+  exercise,
+  previousNote,
+  onSave,
+}: {
+  exercise: WorkoutExercise;
+  previousNote?: { notes: string; startedAt: string };
+  onSave: (feedback: {
+    notes?: string;
+    feeling?: string;
+    repsInReserve?: '3+' | '1-2' | '0';
+  }) => void;
+}) {
+  const [notes, setNotes] = useState(exercise.notes ?? '');
+  const [feeling, setFeeling] = useState(exercise.feeling ?? '');
+  return (
+    <section className="card card-pad workout-feedback" aria-label={`${exercise.name} feedback`}>
+      <details className="exercise-notes">
+        <summary aria-label="Notes (optional)">
+          <span>
+            Notes <span className="muted">(optional)</span>
+          </span>
+          <ChevronDown size={16} aria-hidden="true" />
+        </summary>
+        <div className="exercise-notes-content">
+          <FeedbackRating
+            label="How did this exercise feel?"
+            ariaLabel="Exercise difficulty"
+            options={[
+              { value: 'easy', label: 'Easy' },
+              { value: 'good', label: 'Good' },
+              { value: 'hard', label: 'Hard' },
+            ]}
+            value={feeling}
+            onChange={(next) => {
+              setFeeling(next ?? '');
+              onSave({ feeling: next, repsInReserve: undefined });
+            }}
+          />
+          <label className="form-field">
+            <span className="feedback-label">
+              Exercise note <span className="muted">· optional</span>
+            </span>
+            <textarea
+              className="textarea"
+              rows={2}
+              value={notes}
+              onChange={(event) => {
+                const next = event.target.value;
+                setNotes(next);
+                onSave({ notes: next });
+              }}
+              placeholder="Anything to remember next time?"
+            />
+          </label>
+        </div>
+      </details>
+      {previousNote?.notes && (
+        <p className="muted small previous-exercise-note">
+          Last time · {new Date(previousNote.startedAt).toLocaleDateString()} — {previousNote.notes}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function WorkoutNote({
+  workout,
+  previousNote,
+  onSave,
+}: {
+  workout: Workout;
+  previousNote?: { notes: string; startedAt: string };
+  onSave: (notes: string) => Promise<boolean>;
+}) {
+  const [notes, setNotes] = useState(workout.notes ?? '');
+  return (
+    <section className="card card-pad workout-feedback workout-note">
+      <label className="form-field">
+        <span className="feedback-label">
+          Workout note <span className="muted">· optional</span>
+        </span>
+        <textarea
+          className="textarea"
+          rows={2}
+          value={notes}
+          onChange={(event) => {
+            const next = event.target.value;
+            setNotes(next);
+            void onSave(next);
+          }}
+          placeholder="How did the full session go?"
+        />
+      </label>
+      {previousNote?.notes && (
+        <p className="muted small previous-exercise-note">
+          Last workout · {new Date(previousNote.startedAt).toLocaleDateString()} —{' '}
+          {previousNote.notes}
+        </p>
+      )}
+      <p className="muted small">Notes stay private, even when you share this workout.</p>
+      <span className="muted small">Saves on this device as you type</span>
+    </section>
+  );
+}
+
+function WorkoutFeeling({
+  workout,
+  onSave,
+}: {
+  workout: Workout;
+  onSave: (feeling?: string) => Promise<boolean>;
+}) {
+  const [saving, setSaving] = useState(false);
+  return (
+    <FeedbackRating
+      label="How did the workout feel?"
+      ariaLabel="Workout difficulty"
+      options={[
+        { value: 'easy', label: 'Easy' },
+        { value: 'good', label: 'Good' },
+        { value: 'hard', label: 'Hard' },
+      ]}
+      value={workout.feeling ?? ''}
+      disabled={saving}
+      onChange={(next) => {
+        setSaving(true);
+        void onSave(next).finally(() => setSaving(false));
+      }}
+    />
+  );
+}
+
+function FeedbackRating({
+  label,
+  ariaLabel,
+  options,
+  value,
+  onChange,
+  disabled = false,
+}: {
+  label: string;
+  ariaLabel: string;
+  options: { value: string; label: string }[];
+  value: string;
+  onChange: (value?: string) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="form-field">
+      <span className="feedback-label">{label}</span>
+      <div className="feedback-rating-options" role="group" aria-label={ariaLabel}>
+        {options.map((rating) => (
+          <button
+            key={rating.value}
+            className={`feedback-rating-button${value === rating.value ? ' selected' : ''}`}
+            type="button"
+            disabled={disabled}
+            aria-pressed={value === rating.value}
+            onClick={() => onChange(value === rating.value ? undefined : rating.value)}
+          >
+            {rating.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function ProgressScreen({
   data,
   timezone,
   view,
   setView,
   onWorkout,
-  onCoach,
-  canCoach = true,
   onRepeat,
   proposals,
   selection,
@@ -2100,11 +2209,6 @@ function ProgressScreen({
                 : 'Workout history'}
           </h1>
         </div>
-        {canCoach && (
-          <Button variant="ai" onClick={onCoach}>
-            <Sparkles size={16} /> Ask Coach
-          </Button>
-        )}
       </div>
       {view === 'overview' && (
         <>

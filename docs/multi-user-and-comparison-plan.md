@@ -88,7 +88,7 @@ Use internal account IDs as ownership keys; never trust an `ownerId` supplied by
 
 Generate shared projections from the owner's accepted server state, with idempotent owner/workout keys and source revisions. Recompute or invalidate them after sync, correction, unshare, deletion and restore. A comparison response should use one consistent projection revision per person and include its scope and last-update time. Never serve a stale projection once its source is deleted or its permission revoked; hide it while recomputation is pending. Other people's updates do not create conflicts in the owner's private document. Sharing failures do not roll back or block a locally finished workout.
 
-Keep Coach unavailable to tracking-only beta accounts through server entitlements. Reading a friend's profile does not authorize sending that friend's data to a model provider. Any later social Coach analysis needs its own clearly defined scope and consent design.
+The owner's later instruction enables Coach for every active admitted account, using provisioned server-side providers. Reading a friend's profile does not authorize sending that friend's data to a model provider. Any later social Coach analysis needs its own clearly defined scope and consent design.
 
 ## Implementation order and acceptance
 
