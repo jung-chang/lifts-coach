@@ -253,13 +253,6 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
       return;
     }
     void loadFeed(false, true);
-    return () => {
-      if (feedRequest.current) {
-        feedGeneration.current += 1;
-        feedRequest.current.abort();
-        feedRequest.current = null;
-      }
-    };
   }, [accountId, view.kind, feedFetched, isOnline, loadFeed]);
 
   useEffect(() => {

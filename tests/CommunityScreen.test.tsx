@@ -39,6 +39,43 @@ const jsonResponse = (value: unknown) =>
   });
 
 describe('CommunityScreen', () => {
+  it('keeps a pending Load more request alive after the initial feed finishes', async () => {
+    let resolveMore: ((response: Response) => void) | undefined;
+    let moreSignal: AbortSignal | undefined;
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).includes('cursor=next')) {
+        moreSignal = init?.signal as AbortSignal;
+        return new Promise<Response>((resolve) => {
+          resolveMore = resolve;
+        });
+      }
+      return jsonResponse({ items: [feedItem], nextCursor: 'next' });
+    });
+    render(
+      <CommunityScreen
+        session={session}
+        unit="lb"
+        onSessionChange={() => {}}
+        onSettings={() => {}}
+        onCoach={() => {}}
+      />,
+    );
+    await screen.findByText('Upper body');
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await waitFor(() => expect(resolveMore).toBeTypeOf('function'));
+    expect(moreSignal?.aborted).toBe(false);
+    resolveMore?.(
+      jsonResponse({
+        items: [{ ...feedItem, id: 'pub-b', title: 'Older workout' }],
+        nextCursor: null,
+      }),
+    );
+    await screen.findByText('Older workout');
+    expect(screen.getByRole('button', { name: 'Refresh feed' }).hasAttribute('disabled')).toBe(
+      false,
+    );
+  });
+
   it('revalidates every loaded feed page when returning from a profile', async () => {
     let firstPageCalls = 0;
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
