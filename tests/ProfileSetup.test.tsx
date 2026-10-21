@@ -23,7 +23,7 @@ const session: AccountSession = {
     enabledAt: null,
   },
 };
-it('saves the name and device timezone before continuing without changing sharing', async () => {
+it('explains default sharing while saving the name and device timezone', async () => {
   vi.mocked(patchProfile).mockResolvedValue({ ...session, profileSetupRequired: false });
   const onComplete = vi.fn();
   render(<ProfileSetup session={session} onComplete={onComplete} />);
@@ -40,7 +40,7 @@ it('saves the name and device timezone before continuing without changing sharin
     },
     expect.any(AbortSignal),
   );
-  expect(screen.getByText(/Workouts and stats start private/)).toBeTruthy();
+  expect(screen.getByText(/Future finished workouts share/)).toBeTruthy();
 });
 it('keeps the form and entered name when saving fails', async () => {
   vi.mocked(patchProfile).mockRejectedValue(new Error('Connection lost. Try again.'));

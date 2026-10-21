@@ -68,8 +68,8 @@ export function ProfileSetup({
           <small className="muted">Detected from your device. Used for workout dates.</small>
         </div>
         <p className="muted small">
-          Workouts and stats start private. Share a finished workout to the community feed, or turn
-          on profile stats in your profile. Your email, notes and chats stay private.
+          Future finished workouts share dates, exercises, loads and reps with members by default.
+          Change this in account settings. Profile stats, email, notes and chats stay private.
         </p>
         {error && <p role="alert">{error}</p>}
         <Button type="submit" variant="primary" size="lg" disabled={busy || !name.trim()}>

@@ -417,17 +417,18 @@ app.patch('/api/me/profile', async (c) => {
   } catch {
     return c.json({ error: 'Invalid training timezone.' }, 400);
   }
-  await c.env.DB.prepare(
-    'UPDATE profiles SET display_name=?,training_timezone=?,updated_at=?,setup_completed_at=COALESCE(setup_completed_at,?) WHERE account_id=?',
-  )
-    .bind(
-      body.displayName,
-      body.trainingTimezone,
-      new Date().toISOString(),
-      new Date().toISOString(),
-      c.get('accountId'),
-    )
-    .run();
+  const now = new Date().toISOString(),
+    accountId = c.get('accountId');
+  await c.env.DB.batch([
+    // Apply the setup default once, after the audience notice. Later profile edits,
+    // retries and accounts with an existing sharing choice cannot reset that choice.
+    c.env.DB.prepare(
+      'UPDATE sharing_settings SET auto_publish_workouts=1,workout_sharing_enabled_at=?,audience_acknowledged_at=?,policy_revision=policy_revision+1,updated_at=? WHERE account_id=? AND policy_revision=1 AND EXISTS(SELECT 1 FROM profiles WHERE account_id=? AND setup_completed_at IS NULL)',
+    ).bind(now, now, now, accountId, accountId),
+    c.env.DB.prepare(
+      'UPDATE profiles SET display_name=?,training_timezone=?,updated_at=?,setup_completed_at=COALESCE(setup_completed_at,?) WHERE account_id=?',
+    ).bind(body.displayName, body.trainingTimezone, now, now, accountId),
+  ]);
   return c.json(await getSession(c.env, c.get('accountId')));
 });
 app.patch('/api/me/sharing', async (c) => {

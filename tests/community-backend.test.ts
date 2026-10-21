@@ -262,7 +262,7 @@ describe('community backend authorization and publication', () => {
     }
   });
 
-  it('sets up each new profile once without sharing training or changing another account', async () => {
+  it('defaults new profile setup to future workout sharing without changing another account', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => Response.json(jwks)),
@@ -290,7 +290,7 @@ describe('community backend authorization and publication', () => {
       expect(saved).toMatchObject({
         profileSetupRequired: false,
         profile: { displayName: 'Friend', trainingTimezone: 'America/New_York' },
-        sharing: { summaryEnabled: false, autoPublishWorkouts: false },
+        sharing: { summaryEnabled: false, autoPublishWorkouts: true, policyRevision: 2 },
       });
       expect(
         ((await (await call(db, first, '/api/session')).json()) as any).profileSetupRequired,
@@ -299,6 +299,107 @@ describe('community backend authorization and publication', () => {
       expect(other.accountId).not.toBe(saved.accountId);
       expect(other.profileSetupRequired).toBe(true);
       expect(other.profile.displayName).not.toBe('Friend');
+      expect(other.sharing.autoPublishWorkouts).toBe(false);
+    } finally {
+      db.db.close();
+    }
+  });
+  it('shares future workouts after setup and preserves later choices on retries', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1();
+    try {
+      const token = await auth('setup-sharing@example.test', 'setup-sharing');
+      const session = (await (await call(db, token, '/api/session')).json()) as any;
+      const data = finishedData();
+      data.workouts[0].startedAt = '2026-01-01T12:00:00.000Z';
+      data.workouts[0].completedAt = '2026-01-01T13:00:00.000Z';
+      expect(
+        (
+          await call(db, token, '/api/state', 'PUT', {
+            accountId: session.accountId,
+            operationId: 'setup-old',
+            deviceId: 'synthetic',
+            baseRevision: 0,
+            data,
+          })
+        ).status,
+      ).toBe(200);
+      const profile = { displayName: 'Synthetic member', trainingTimezone: 'UTC' };
+      const saved = (await (
+        await call(db, token, '/api/me/profile', 'PATCH', profile)
+      ).json()) as any;
+      expect(saved.sharing).toMatchObject({
+        autoPublishWorkouts: true,
+        summaryEnabled: false,
+        policyRevision: 2,
+      });
+      expect(saved.sharing.audienceAcknowledgedAt).toBeTruthy();
+      expect(saved.sharing.enabledAt).toBeTruthy();
+      const recent = structuredClone(finishedData().workouts[0]);
+      recent.id = 'after-setup';
+      recent.startedAt = saved.sharing.enabledAt ?? new Date().toISOString();
+      data.workouts.push(recent);
+      expect(
+        (
+          await call(db, token, '/api/state', 'PUT', {
+            accountId: session.accountId,
+            operationId: 'setup-new',
+            deviceId: 'synthetic',
+            baseRevision: 1,
+            data,
+          })
+        ).status,
+      ).toBe(200);
+      const page = (await (await call(db, token, '/api/community/feed')).json()) as any;
+      expect(page.items).toHaveLength(1);
+      expect(
+        db.db
+          .prepare('SELECT visibility FROM workout_visibility WHERE account_id=? AND workout_id=?')
+          .get(session.accountId, 'workout-1'),
+      ).toEqual({ visibility: 'private' });
+      const changed = (await (
+        await call(db, token, '/api/me/sharing', 'PATCH', {
+          summaryEnabled: false,
+          autoPublishWorkouts: false,
+          policyRevision: saved.sharing.policyRevision,
+          audienceAcknowledged: true,
+        })
+      ).json()) as any;
+      const retried = (await (
+        await call(db, token, '/api/me/profile', 'PATCH', profile)
+      ).json()) as any;
+      expect(retried.sharing).toEqual(changed.sharing);
+    } finally {
+      db.db.close();
+    }
+  });
+  it('preserves an explicit sharing choice made before profile setup', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1();
+    try {
+      const token = await auth('setup-private@example.test', 'setup-private');
+      await call(db, token, '/api/me/sharing', 'PATCH', {
+        summaryEnabled: false,
+        autoPublishWorkouts: false,
+        policyRevision: 1,
+      });
+      const saved = (await (
+        await call(db, token, '/api/me/profile', 'PATCH', {
+          displayName: 'Synthetic private member',
+          trainingTimezone: 'UTC',
+        })
+      ).json()) as any;
+      expect(saved.sharing).toMatchObject({
+        autoPublishWorkouts: false,
+        enabledAt: null,
+        policyRevision: 2,
+      });
     } finally {
       db.db.close();
     }
