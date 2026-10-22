@@ -13,6 +13,7 @@ import { Button } from './ui/Button';
 import { TimezonePicker } from './TimezonePicker';
 import { formatLoadValue } from './LoadSemantics';
 import { WorkoutDetails } from './WorkoutDetails';
+import { WorkoutPreviewCard } from './WorkoutPreviewCard';
 import {
   blockProfile,
   getFeed,
@@ -58,18 +59,6 @@ const initials = (name: string) =>
     .slice(0, 2)
     .map((p) => p[0]?.toUpperCase())
     .join('') || '?';
-const dateTime = (value: string, timezone?: string) =>
-  new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    ...(timezone ? { timeZone: timezone } : {}),
-  }).format(new Date(value));
-const relative = (value: string) => {
-  const minutes = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 60000));
-  if (minutes < 60) return `${minutes} min ago`;
-  if (minutes < 1440) return `${Math.floor(minutes / 60)} hr ago`;
-  return `${Math.floor(minutes / 1440)} days ago`;
-};
 const displayLoad = (mode: LoadMode, pounds: number, unit: Unit) =>
   formatLoadValue(mode, toDisplayWeight(pounds, unit), unit);
 const abortError = (e: unknown) => e instanceof DOMException && e.name === 'AbortError';
@@ -486,8 +475,16 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
           )}
           <div className="community-feed">
             {feed.map((item) => (
-              <article key={item.id} className="community-feed-item">
-                <div className="community-owner">
+              <WorkoutPreviewCard
+                key={item.id}
+                title={item.title}
+                completedAt={item.activityAt}
+                exerciseCount={item.exerciseCount}
+                durationMinutes={item.durationMinutes}
+                hasRecord={item.hasRecord}
+                onOpen={() => openWorkout(item.id)}
+                accessibleName={`View ${item.title} workout by ${item.profile.displayName}`}
+                owner={
                   <button
                     className="community-profile-link"
                     onClick={() => go({ kind: 'profile', id: item.profile.publicId })}
@@ -495,31 +492,8 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
                     <Avatar profile={item.profile} small />
                     <span>{item.profile.displayName}</span>
                   </button>
-                  <time
-                    dateTime={item.activityAt}
-                    title={dateTime(item.activityAt, item.profile.trainingTimezone)}
-                  >
-                    {relative(item.activityAt)}
-                  </time>
-                </div>
-                <button
-                  className="community-workout-link"
-                  onClick={() => openWorkout(item.id)}
-                  aria-label={`View ${item.title} workout by ${item.profile.displayName}`}
-                >
-                  <h2>{item.title}</h2>
-                  <p>
-                    {item.exerciseCount} exercises · {item.setCount} working sets
-                    {item.durationMinutes != null ? ` · ${item.durationMinutes} min` : ''}
-                  </p>
-                  {item.exerciseNames.length > 0 && (
-                    <span className="community-exercise-preview">
-                      {item.exerciseNames.slice(0, 2).join(', ')}
-                      {item.exerciseNames.length > 2 ? ` +${item.exerciseNames.length - 2}` : ''}
-                    </span>
-                  )}
-                </button>
-              </article>
+                }
+              />
             ))}
           </div>
           {feedLoading && feed.length > 0 && <Busy text="Loading more workouts…" />}
@@ -765,6 +739,8 @@ function ProfileContent({
                 date: w.activityAt,
                 durationMinutes: w.durationMinutes,
                 setCount: w.setCount,
+                exerciseCount: w.exerciseCount,
+                hasRecord: w.hasRecord,
               }))}
               onWorkout={onWorkout}
               onLoadMore={cursor ? () => void more() : undefined}
@@ -939,12 +915,15 @@ function SharedWorkoutContent({
 }) {
   return (
     <div className="community-workout-detail">
-      <button className="community-profile-link community-workout-owner" onClick={onProfile}>
-        <Avatar profile={workout.profile} small />
-        <span>{workout.profile.displayName}</span>
-      </button>
       <WorkoutDetails
+        owner={
+          <button className="community-profile-link community-workout-owner" onClick={onProfile}>
+            <Avatar profile={workout.profile} small />
+            <span>{workout.profile.displayName}</span>
+          </button>
+        }
         title={workout.title}
+        recordSetIds={workout.recordSetIds}
         startedAt={workout.startedAt}
         completedAt={workout.completedAt}
         timeZone={workout.profile.trainingTimezone}
@@ -993,8 +972,14 @@ export function OwnProfileScreen({
   onViewChange,
 }: OwnProps) {
   const [view, setView] = useState<ProfileSection>(initialView);
-  const stats = useMemo(() => exerciseStatsFromWorkouts(data.workouts), [data.workouts]);
-  const history = useMemo(() => historyItemsFromWorkouts(data.workouts), [data.workouts]);
+  const stats = useMemo(
+    () => exerciseStatsFromWorkouts(data.workouts, data.exercises),
+    [data.workouts, data.exercises],
+  );
+  const history = useMemo(
+    () => historyItemsFromWorkouts(data.workouts, data.exercises),
+    [data.workouts, data.exercises],
+  );
   const [editing, setEditing] = useState(false);
   const [settings, setSettings] = useState(false);
   const [name, setName] = useState(session?.profile.displayName ?? '');

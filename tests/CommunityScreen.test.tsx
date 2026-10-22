@@ -61,6 +61,22 @@ describe('CommunityScreen', () => {
       />,
     );
     await screen.findByText('Upper body');
+    const preview = screen
+      .getByRole('button', { name: /View Upper body workout by Alex Example/ })
+      .closest('article')!;
+    expect(preview.classList.contains('workout-preview-card')).toBe(true);
+    expect(preview.textContent).toContain('1 exercise');
+    expect(preview.textContent).toContain('40 min');
+    expect(preview.textContent).not.toContain('working sets');
+    expect(preview.textContent).not.toContain('Bench press');
+    expect(preview.querySelector('time')?.getAttribute('datetime')).toBe(feedItem.activityAt);
+    expect(preview.textContent).toContain(
+      new Date(feedItem.activityAt).toLocaleTimeString(undefined, {
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZoneName: 'short',
+      }),
+    );
     fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
     await waitFor(() => expect(resolveMore).toBeTypeOf('function'));
     expect(moreSignal?.aborted).toBe(false);
@@ -244,6 +260,7 @@ describe('CommunityScreen', () => {
           id: 'pub-a',
           profile,
           title: 'Upper body',
+          recordSetIds: ['s1'],
           startedAt: '2026-10-18T14:20:00Z',
           completedAt: '2026-10-18T15:00:00Z',
           exercises: [
@@ -278,6 +295,7 @@ describe('CommunityScreen', () => {
       await screen.findByRole('button', { name: /View Upper body workout by Alex Example/ }),
     );
     const table = await screen.findByRole('table');
+    expect(table.closest('.workout-details')?.classList.contains('card')).toBe(true);
     expect(within(table).getAllByRole('row')).toHaveLength(3);
     expect(within(table).getAllByText('25 lb each')).toHaveLength(2);
     expect(within(table).getByText('Warm-up 1')).toBeTruthy();
@@ -290,6 +308,8 @@ describe('CommunityScreen', () => {
     expect(screen.getByText('Duration')).toBeTruthy();
     expect(screen.getByText('40 min')).toBeTruthy();
     expect(screen.getByText(/UTC/)).toBeTruthy();
+    expect(within(table).getAllByRole('img', { name: /Personal record/ })).toHaveLength(1);
+    expect(screen.queryByRole('region', { name: 'Personal records achieved' })).toBeNull();
     expect(screen.queryByRole('button', { name: /Complete|Edit/ })).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/api/community/feed'),

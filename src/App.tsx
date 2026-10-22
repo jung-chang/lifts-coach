@@ -78,6 +78,8 @@ import {
   historyItemsFromWorkouts,
 } from './components/TrainingHistory';
 import { exerciseStatsFromWorkouts } from '../shared/trainingStats';
+import { personalRecordsFromWorkouts } from '../shared/personalRecords';
+import { WorkoutRecords } from './components/PersonalRecords';
 import { WorkoutVisibilityControl } from './components/WorkoutVisibilityControl';
 import type { AccountSession } from '../shared/community';
 import { mondayOfDate, recentMondayDates, trainingDateAt } from '../shared/trainingDates';
@@ -198,6 +200,10 @@ function App() {
     loadMode: 'external',
     region: 'upper',
   });
+  const records = useMemo(
+    () => personalRecordsFromWorkouts(data?.workouts ?? [], data?.exercises ?? []),
+    [data?.workouts, data?.exercises],
+  );
   const active = data?.workouts.find((w: Workout) => w.status === 'active');
   const currentAccount = useRef(session?.accountId ?? null);
   currentAccount.current = session?.accountId ?? null;
@@ -588,7 +594,7 @@ function App() {
     }).then((ok) => {
       if (ok && changed && targetWorkout.status === 'active' && before) {
         setUndo({ data: before, label: done ? 'Set completed' : 'Set restored' });
-        say(done ? 'Set logged' : 'Set restored');
+        setNotice('');
       }
     });
   };
@@ -1125,7 +1131,7 @@ function App() {
                   finish={finish}
                   requestDiscard={() => setDiscardWorkoutRequested(workout!.id)}
                   setUndo={undoLast}
-                  undo={undo}
+                  undo={notice ? null : undo}
                   say={say}
                   mutate={mutate}
                   saveFeedback={(
@@ -1240,6 +1246,7 @@ function App() {
               return historical ? (
                 <WorkoutSummary
                   workout={historical}
+                  records={records.achievements}
                   unit={data.settings.unit}
                   session={session}
                   synced={status === 'synced'}
@@ -1714,6 +1721,14 @@ function App() {
               <div className="muted small">Your completed sets are now in history.</div>
             </div>
           </div>
+          {summaryWorkout && (
+            <WorkoutRecords
+              records={records.achievements.filter(
+                (record) => record.workoutId === summaryWorkout.id,
+              )}
+              unit={data?.settings.unit ?? 'lb'}
+            />
+          )}
           {session && summaryWorkout && (
             <WorkoutVisibilityControl
               session={session}
@@ -1958,6 +1973,16 @@ function WorkoutScreen({
               )
             }
           />
+          {undo && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={setUndo}
+              aria-label="Undo last workout action"
+            >
+              <Undo2 size={15} /> Undo
+            </Button>
+          )}
           <ExerciseFeedback
             key={`${workout.id}:${ex.id}:${ex.exerciseId}`}
             exercise={ex}
@@ -2178,8 +2203,14 @@ function ProgressScreen({
     window.scrollTo({ top: 0 });
   };
   const finished = (data.workouts as Workout[]).filter((w) => w.status === 'finished');
-  const stats = useMemo(() => exerciseStatsFromWorkouts(data.workouts), [data.workouts]);
-  const history = useMemo(() => historyItemsFromWorkouts(data.workouts), [data.workouts]);
+  const stats = useMemo(
+    () => exerciseStatsFromWorkouts(data.workouts, data.exercises),
+    [data.workouts, data.exercises],
+  );
+  const history = useMemo(
+    () => historyItemsFromWorkouts(data.workouts, data.exercises),
+    [data.workouts, data.exercises],
+  );
   const weeks = recentMondayDates(timezone).map((start) => ({
     label: `${Number(start.slice(5, 7))}/${Number(start.slice(8, 10))}`,
     count: finished

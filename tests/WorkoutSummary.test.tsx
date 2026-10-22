@@ -80,6 +80,7 @@ it('shows completed performance in the recorded timezone and preserves owner act
     />,
   );
   const table = screen.getByRole('table', { name: /completed sets/ });
+  expect(table.closest('.workout-details')?.classList.contains('card')).toBe(true);
   expect(within(table).getAllByRole('row')).toHaveLength(3);
   expect(within(table).getByText('Warm-up 1')).toBeTruthy();
   expect(within(table).getByText('50 lb each')).toBeTruthy();

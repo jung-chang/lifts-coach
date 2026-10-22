@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { LoadMode, Unit } from '../../shared/types';
 import { toDisplayWeight } from '../../shared/domain';
 import { formatLoadValue } from './LoadSemantics';
+import { RecordStar } from './PersonalRecords';
 
 type DetailSet = {
   id: string;
@@ -24,6 +25,9 @@ export function WorkoutDetails({
   headerAction,
   exerciseAction,
   exerciseFooter,
+  recordSetIds = [],
+  owner,
+  footer,
 }: {
   title: string;
   startedAt: string;
@@ -35,6 +39,9 @@ export function WorkoutDetails({
   headerAction?: ReactNode;
   exerciseAction?: (id: string) => ReactNode;
   exerciseFooter?: (id: string) => ReactNode;
+  recordSetIds?: string[];
+  owner?: ReactNode;
+  footer?: ReactNode;
 }) {
   const Heading = headingLevel === 1 ? 'h1' : 'h2';
   const ExerciseHeading = headingLevel === 1 ? 'h2' : 'h3';
@@ -51,10 +58,17 @@ export function WorkoutDetails({
           ? `${minutes} min`
           : `${Math.floor(minutes / 60)} hr${minutes % 60 ? ` ${minutes % 60} min` : ''}`;
   const completedExercises = exercises.filter((exercise) => exercise.sets.length > 0);
+  const recordSets = new Set(recordSetIds);
+  const hasRecord = exercises.some((exercise) =>
+    exercise.sets.some((set) => recordSets.has(set.id)),
+  );
   return (
-    <div className="workout-details">
+    <section className="card card-pad workout-details">
+      {owner && <div className="workout-preview-owner">{owner}</div>}
       <div className="page-heading">
-        <Heading>{title}</Heading>
+        <Heading>
+          {title} {hasRecord && <RecordStar />}
+        </Heading>
         {headerAction}
       </div>
       <dl className="summary-metadata">
@@ -123,6 +137,12 @@ export function WorkoutDetails({
                       <td>{set.kind === 'warmup' ? `Warm-up ${++warmupIndex}` : ++workingIndex}</td>
                       <td>
                         {formatLoadValue(set.loadMode, toDisplayWeight(set.weight, unit), unit)}
+                        {recordSets.has(set.id) && (
+                          <>
+                            {' '}
+                            <RecordStar />
+                          </>
+                        )}
                       </td>
                       <td>{set.reps}</td>
                     </tr>
@@ -136,6 +156,7 @@ export function WorkoutDetails({
           </section>
         );
       })}
-    </div>
+      {footer}
+    </section>
   );
 }

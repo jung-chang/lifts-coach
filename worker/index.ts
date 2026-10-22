@@ -8,6 +8,9 @@ import type { ProviderEnv } from './coach';
 import { emptyData, validateBackup } from '../shared/domain';
 import { catalog } from '../shared/catalog';
 import { splitState } from './chunks';
+import { personalRecordsFromWorkouts, recordKey } from '../shared/personalRecords';
+import type { LoadMode } from '../shared/types';
+import type { ExerciseStat } from '../shared/trainingStats';
 
 interface Env extends ProviderEnv {
   DB: D1Database;
@@ -329,7 +332,7 @@ async function rebuildProjection(
       !!settings?.autoPublishWorkouts &&
       !!settings?.audienceAcknowledgedAt &&
       !!settings?.enabledAt &&
-      w.startedAt >= settings.enabledAt;
+      Date.parse(w.startedAt) >= Date.parse(settings.enabledAt);
     const requested =
       explicit?.visibility === 'private'
         ? 'private'
@@ -398,8 +401,13 @@ async function rebuildProjection(
     );
     final.push(
       env.DB.prepare(
-        "INSERT INTO workout_publications(account_id,workout_id,id,activity_at,published_at) SELECT tw.account_id,tw.workout_id,lower(hex(randomblob(16))),tw.completed_at,? FROM training_workouts tw JOIN workout_visibility v USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=tw.account_id AND ast.revision=ps.source_revision WHERE tw.account_id=? AND v.visibility='community' AND ps.source_revision=? AND EXISTS(SELECT 1 FROM training_sets ts WHERE ts.account_id=tw.account_id AND ts.workout_id=tw.workout_id AND ts.kind='working') ON CONFLICT(account_id,workout_id) DO NOTHING",
-      ).bind(now, accountId, revision),
+        "INSERT INTO workout_publications(account_id,workout_id,id,activity_at,published_at,shared_title) SELECT tw.account_id,tw.workout_id,lower(hex(randomblob(16))),tw.completed_at,?,COALESCE((SELECT json_extract(value,'$.title') FROM json_each(?) WHERE json_extract(value,'$.workoutId')=tw.workout_id),'Workout') FROM training_workouts tw JOIN workout_visibility v USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=tw.account_id AND ast.revision=ps.source_revision WHERE tw.account_id=? AND v.visibility='community' AND ps.source_revision=? AND EXISTS(SELECT 1 FROM training_sets ts WHERE ts.account_id=tw.account_id AND ts.workout_id=tw.workout_id AND ts.kind='working') ON CONFLICT(account_id,workout_id) DO UPDATE SET shared_title=excluded.shared_title",
+      ).bind(
+        now,
+        JSON.stringify(valid.map((workout) => ({ workoutId: workout.id, title: workout.name }))),
+        accountId,
+        revision,
+      ),
     );
   }
   await env.DB.batch([...statements, ...final]);
@@ -491,6 +499,14 @@ async function profileDto(env: Env, accountId: string) {
 function exerciseLabel(id: string) {
   return catalog.find((e) => e.id === id)?.name || 'Custom exercise';
 }
+async function accountPersonalRecords(env: Env, accountId: string) {
+  const state = await readState(env, accountId);
+  return {
+    ...personalRecordsFromWorkouts(state.data.workouts, state.data.exercises),
+    revision: state.revision,
+    workoutNames: new Map(state.data.workouts.map((workout) => [workout.id, workout.name])),
+  };
+}
 async function feedItems(
   env: Env,
   viewer: string,
@@ -499,7 +515,7 @@ async function feedItems(
 ) {
   const pageSize = owner ? 5 : 20;
   const rows = await env.DB.prepare(
-    `SELECT p.id,p.account_id accountId,p.workout_id workoutId,p.activity_at activityAt,pr.public_id publicId,pr.display_name displayName,pr.training_timezone trainingTimezone,tw.training_date trainingDate,tw.started_at startedAt,tw.completed_at completedAt FROM workout_publications p JOIN training_workouts tw USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=p.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=p.account_id AND ast.revision=ps.source_revision JOIN workout_visibility v USING(account_id,workout_id) JOIN sharing_settings s ON s.account_id=p.account_id JOIN accounts a ON a.id=p.account_id AND a.status='active' JOIN profiles pr ON pr.account_id=p.account_id WHERE v.visibility='community' AND (? IS NULL OR p.account_id=?) AND (? IS NULL OR (p.activity_at,p.id)<(?,?)) AND NOT EXISTS(SELECT 1 FROM account_blocks b WHERE (b.account_id=? AND b.blocked_account_id=p.account_id) OR (b.account_id=p.account_id AND b.blocked_account_id=?)) ORDER BY p.activity_at DESC,p.id DESC LIMIT ?`,
+    `SELECT p.id,p.account_id accountId,p.workout_id workoutId,p.shared_title sharedTitle,p.activity_at activityAt,pr.public_id publicId,pr.display_name displayName,pr.training_timezone trainingTimezone,tw.training_date trainingDate,tw.started_at startedAt,tw.completed_at completedAt,tw.source_revision sourceRevision FROM workout_publications p JOIN training_workouts tw USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=p.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=p.account_id AND ast.revision=ps.source_revision JOIN workout_visibility v USING(account_id,workout_id) JOIN sharing_settings s ON s.account_id=p.account_id JOIN accounts a ON a.id=p.account_id AND a.status='active' JOIN profiles pr ON pr.account_id=p.account_id WHERE v.visibility='community' AND (? IS NULL OR p.account_id=?) AND (? IS NULL OR (p.activity_at,p.id)<(?,?)) AND NOT EXISTS(SELECT 1 FROM account_blocks b WHERE (b.account_id=? AND b.blocked_account_id=p.account_id) OR (b.account_id=p.account_id AND b.blocked_account_id=?)) ORDER BY p.activity_at DESC,p.id DESC LIMIT ?`,
   )
     .bind(
       owner ?? null,
@@ -513,13 +529,17 @@ async function feedItems(
     )
     .all<Record<string, any>>();
   const items = [];
+  const recordsByAccount = new Map<string, Awaited<ReturnType<typeof accountPersonalRecords>>>();
   for (const row of rows.results.slice(0, pageSize)) {
     const summary = await env.DB.prepare(
-      "SELECT COUNT(DISTINCT exercise_instance_id) exerciseCount,COUNT(*) setCount,MIN(exercise_id) firstExercise FROM training_sets WHERE account_id=? AND workout_id=? AND kind='working'",
+      "SELECT COUNT(DISTINCT exercise_instance_id) exerciseCount,SUM(CASE WHEN kind='working' THEN 1 ELSE 0 END) setCount,MIN(CASE WHEN kind='working' THEN exercise_id END) firstExercise FROM training_sets WHERE account_id=? AND workout_id=?",
     )
       .bind(row.accountId, row.workoutId)
       .first<Record<string, any>>();
     if (!summary?.setCount) continue;
+    if (!recordsByAccount.has(row.accountId))
+      recordsByAccount.set(row.accountId, await accountPersonalRecords(env, row.accountId));
+    const personalRecords = recordsByAccount.get(row.accountId)!;
     const names = await env.DB.prepare(
       "SELECT exercise_id exerciseId FROM training_sets WHERE account_id=? AND workout_id=? AND kind='working' GROUP BY exercise_instance_id ORDER BY exercise_instance_id LIMIT 2",
     )
@@ -533,7 +553,12 @@ async function feedItems(
         trainingTimezone: row.trainingTimezone,
       },
       activityAt: row.activityAt,
-      title: `Workout · ${new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric' }).format(new Date(`${row.trainingDate}T12:00:00`))}`,
+      title:
+        row.sharedTitle ||
+        (personalRecords.revision === row.sourceRevision
+          ? personalRecords.workoutNames.get(row.workoutId)
+          : undefined) ||
+        'Workout',
       durationMinutes: Math.max(
         0,
         Math.round((Date.parse(row.completedAt) - Date.parse(row.startedAt)) / 60000),
@@ -541,6 +566,9 @@ async function feedItems(
       exerciseCount: summary.exerciseCount,
       setCount: summary.setCount,
       exerciseNames: names.results.map((x) => exerciseLabel(x.exerciseId)),
+      hasRecord:
+        personalRecords.revision === row.sourceRevision &&
+        personalRecords.achievements.some((record) => record.workoutId === row.workoutId),
     });
   }
   const last = rows.results[Math.min(pageSize - 1, rows.results.length - 1)];
@@ -639,25 +667,25 @@ app.get('/api/community/profiles/:publicId', async (c) => {
     `WITH ranked_sets AS (SELECT ts.exercise_id exerciseId,ts.load_mode loadMode,ts.weight_lb weight,ts.reps,tw.started_at date,tw.workout_id workoutId,ROW_NUMBER() OVER(PARTITION BY tw.workout_id,ts.exercise_id,ts.load_mode ORDER BY CASE WHEN ts.load_mode='assistance' THEN -ts.weight_lb ELSE ts.weight_lb END DESC,ts.reps DESC,ts.completed_at DESC) setRank ${base}), sessions AS (SELECT *,ROW_NUMBER() OVER(PARTITION BY exerciseId,loadMode ORDER BY date DESC,workoutId DESC) sessionRank FROM ranked_sets WHERE setRank=1) SELECT exerciseId,loadMode,weight,reps,date FROM sessions WHERE sessionRank<=8 ORDER BY date,workoutId`,
   )
     .bind(...params)
-    .all<{ exerciseId: string; loadMode: string; weight: number; reps: number; date: string }>();
-  const exerciseStats = new Map<
-    string,
-    {
-      exerciseId: string;
-      name: string;
-      loadMode: string;
-      points: { date: string; weight: number; reps: number }[];
-    }
-  >();
+    .all<{ exerciseId: string; loadMode: LoadMode; weight: number; reps: number; date: string }>();
+  const exerciseStats = new Map<string, ExerciseStat>();
+  const bestByExercise = new Map(
+    (owner || session.sharing.summaryEnabled
+      ? (await accountPersonalRecords(c.env, profile.accountId)).best
+      : []
+    ).map((record) => [recordKey(record.exerciseId, record.loadMode), record]),
+  );
   for (const point of trends.results) {
     const key = `${point.exerciseId}|${point.loadMode}`;
-    const stat = exerciseStats.get(key) ?? {
+    const stat: ExerciseStat = exerciseStats.get(key) ?? {
       exerciseId: point.exerciseId,
       name: exerciseLabel(point.exerciseId),
       loadMode: point.loadMode,
       points: [],
     };
     stat.points.push({ date: point.date, weight: point.weight, reps: point.reps });
+    const best = bestByExercise.get(recordKey(point.exerciseId, point.loadMode));
+    if (best) stat.personalBest = { weight: best.weight, reps: best.reps, date: best.date };
     exerciseStats.set(key, stat);
   }
   return c.json({
@@ -702,7 +730,7 @@ app.get('/api/community/profiles/:publicId/workouts', async (c) => {
 });
 app.get('/api/community/workouts/:publicationId', async (c) => {
   const row = await c.env.DB.prepare(
-    "SELECT p.account_id accountId,p.workout_id workoutId,p.shared_title sharedTitle,p.activity_at activityAt,pr.public_id publicId,pr.display_name displayName,pr.training_timezone trainingTimezone,tw.started_at startedAt,tw.completed_at completedAt FROM workout_publications p JOIN workout_visibility v USING(account_id,workout_id) JOIN training_workouts tw USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=p.account_id AND ast.revision=ps.source_revision JOIN accounts a ON a.id=p.account_id AND a.status='active' JOIN profiles pr ON pr.account_id=p.account_id WHERE p.id=? AND v.visibility='community'",
+    "SELECT p.account_id accountId,p.workout_id workoutId,p.shared_title sharedTitle,p.activity_at activityAt,pr.public_id publicId,pr.display_name displayName,pr.training_timezone trainingTimezone,tw.started_at startedAt,tw.completed_at completedAt,tw.source_revision sourceRevision FROM workout_publications p JOIN workout_visibility v USING(account_id,workout_id) JOIN training_workouts tw USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=p.account_id AND ast.revision=ps.source_revision JOIN accounts a ON a.id=p.account_id AND a.status='active' JOIN profiles pr ON pr.account_id=p.account_id WHERE p.id=? AND v.visibility='community'",
   )
     .bind(c.req.param('publicationId'))
     .first<Record<string, any>>();
@@ -732,14 +760,36 @@ app.get('/api/community/workouts/:publicationId', async (c) => {
       loadMode: s.loadMode,
     });
   }
+  const personalRecords = await accountPersonalRecords(c.env, row.accountId);
+  const recordSetIds =
+    personalRecords.revision === row.sourceRevision
+      ? personalRecords.achievements
+          .filter(
+            (record) =>
+              record.workoutId === row.workoutId &&
+              sets.results.some(
+                (set) =>
+                  set.setId === record.setId &&
+                  Math.abs(set.weight - record.weight) < 0.000001 &&
+                  set.reps === record.reps,
+              ),
+          )
+          .map((record) => record.setId)
+      : [];
   return c.json({
     id: c.req.param('publicationId'),
+    recordSetIds,
     profile: {
       publicId: row.publicId,
       displayName: row.displayName,
       trainingTimezone: row.trainingTimezone,
     },
-    title: row.sharedTitle || 'Workout',
+    title:
+      row.sharedTitle ||
+      (personalRecords.revision === row.sourceRevision
+        ? personalRecords.workoutNames.get(row.workoutId)
+        : undefined) ||
+      'Workout',
     startedAt: row.startedAt,
     completedAt: row.completedAt,
     exercises: [...groups.values()],
@@ -788,12 +838,15 @@ app.put('/api/me/workouts/:workoutId/visibility', async (c) => {
     .run();
   if (!updated.meta.changes)
     return c.json({ error: 'Workout visibility changed. Refresh and review again.' }, 409);
-  if (body.visibility === 'community')
+  if (body.visibility === 'community') {
+    const state = await readState(c.env, a);
+    const title = state.data.workouts.find((workout) => workout.id === id)?.name || 'Workout';
     await c.env.DB.prepare(
-      "INSERT INTO workout_publications(account_id,workout_id,id,activity_at,published_at) SELECT tw.account_id,tw.workout_id,?,tw.completed_at,? FROM training_workouts tw JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=tw.account_id AND ast.revision=ps.source_revision JOIN workout_visibility v USING(account_id,workout_id) WHERE tw.account_id=? AND tw.workout_id=? AND v.visibility='community' AND v.decision_revision=? AND EXISTS(SELECT 1 FROM training_sets ts WHERE ts.account_id=tw.account_id AND ts.workout_id=tw.workout_id AND ts.kind='working') ON CONFLICT(account_id,workout_id) DO NOTHING",
+      "INSERT INTO workout_publications(account_id,workout_id,id,activity_at,published_at,shared_title) SELECT tw.account_id,tw.workout_id,?,tw.completed_at,?,? FROM training_workouts tw JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=tw.account_id AND ast.revision=ps.source_revision JOIN workout_visibility v USING(account_id,workout_id) WHERE tw.account_id=? AND tw.workout_id=? AND v.visibility='community' AND v.decision_revision=? AND EXISTS(SELECT 1 FROM training_sets ts WHERE ts.account_id=tw.account_id AND ts.workout_id=tw.workout_id AND ts.kind='working') ON CONFLICT(account_id,workout_id) DO UPDATE SET shared_title=excluded.shared_title",
     )
-      .bind(crypto.randomUUID(), now, a, id, decision)
+      .bind(crypto.randomUUID(), now, title, a, id, decision)
       .run();
+  }
   return c.json({ visibility: body.visibility, decisionRevision: decision });
 });
 app.post('/api/me/hide-workouts', async (c) => {

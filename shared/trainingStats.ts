@@ -1,14 +1,25 @@
-import type { LoadMode, Workout } from './types';
+import type { Exercise, LoadMode, Workout } from './types';
+import { personalRecordsFromWorkouts, recordKey } from './personalRecords';
 
 export interface ExerciseStat {
   exerciseId: string;
   name: string;
   loadMode: LoadMode;
   points: { date: string; weight: number; reps: number }[];
+  personalBest?: { weight: number; reps: number; date: string };
 }
 
 /** Build actual completed working-set trends, keeping distinct load modes separate. */
-export function exerciseStatsFromWorkouts(workouts: Workout[]): ExerciseStat[] {
+export function exerciseStatsFromWorkouts(
+  workouts: Workout[],
+  customExercises: Exercise[] = [],
+): ExerciseStat[] {
+  const best = new Map(
+    personalRecordsFromWorkouts(workouts, customExercises).best.map((record) => [
+      recordKey(record.exerciseId, record.loadMode),
+      record,
+    ]),
+  );
   const byKey = new Map<string, ExerciseStat>();
   const ordered = workouts
     .filter((workout) => workout.status === 'finished')
@@ -70,6 +81,15 @@ export function exerciseStatsFromWorkouts(workouts: Workout[]): ExerciseStat[] {
     }
   }
   return [...byKey.values()]
-    .map((stat) => ({ ...stat, points: stat.points.slice(-8) }))
+    .map((stat) => {
+      const record = best.get(recordKey(stat.exerciseId, stat.loadMode));
+      return {
+        ...stat,
+        points: stat.points.slice(-8),
+        ...(record
+          ? { personalBest: { weight: record.weight, reps: record.reps, date: record.date } }
+          : {}),
+      };
+    })
     .sort((a, b) => b.points.length - a.points.length || a.name.localeCompare(b.name));
 }

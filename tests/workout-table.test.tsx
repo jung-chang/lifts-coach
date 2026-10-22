@@ -394,6 +394,42 @@ describe('workout set table', () => {
     expect(screen.getByRole('timer', { name: 'Workout elapsed time' }).textContent).toBe('2:10');
   });
 
+  it('lists achieved records after finish and marks the winning load in history and Exercise stats', async () => {
+    const previous = startWorkoutDomain(fixture.data, fixture.data.routines[0].id).workouts[0];
+    previous.status = 'finished';
+    previous.startedAt = '2025-01-01T12:00:00Z';
+    previous.completedAt = '2025-01-01T13:00:00Z';
+    previous.exercises[0].actualSets = [
+      { ...previous.exercises[0].actualSets[0], status: 'completed', weight: 40, reps: 10 },
+    ];
+    fixture.data = { ...fixture.data, workouts: [previous] };
+    await beginWorkout();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Set 1 load' }), {
+      target: { value: '45' },
+    });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Set 1 done' }));
+    await waitFor(() =>
+      expect(fixture.data.workouts[0].exercises[0].actualSets[0].status).toBe('completed'),
+    );
+    expect(document.querySelector('.toast')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Finish workout' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Workout saved' });
+    const records = within(dialog).getByRole('region', { name: 'Personal records achieved' });
+    expect(records.textContent).toContain('45 lb total');
+    expect(within(records).getAllByRole('img', { name: /Personal record/ })).toHaveLength(1);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Done' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Progress' }));
+    fireEvent.click(screen.getByRole('button', { name: /Exercise stats/ }));
+    expect(screen.getByText(/Best load:/).textContent).toContain('45 lb total');
+    fireEvent.click(screen.getByRole('button', { name: /Back to Progress/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Workout history/ }));
+    fireEvent.click(
+      screen.getByRole('button', { name: /Synthetic table routine Personal record/ }),
+    );
+    const table = screen.getByRole('table', { name: /completed sets/ });
+    expect(within(table).getAllByRole('img', { name: /Personal record/ })).toHaveLength(1);
+    expect(screen.queryByRole('region', { name: 'Personal records achieved' })).toBeNull();
+  });
   it('captures each serialized pre-change snapshot so Undo restores only the latest tap', async () => {
     await beginWorkout();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Set 1 done' }));
@@ -401,6 +437,7 @@ describe('workout set table', () => {
     await waitFor(() =>
       expect(fixture.data.workouts[0].exercises[0].actualSets[1].status).toBe('completed'),
     );
+    expect(document.querySelector('.toast')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: /Undo/ }));
     await waitFor(() => {
       expect(fixture.data.workouts[0].exercises[0].actualSets[0].status).toBe('completed');

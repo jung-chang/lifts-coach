@@ -24,12 +24,14 @@ export interface AccountSession {
 export interface FeedItem {
   id: string;
   profile: PublicProfile;
+  /** Workout completion instant, used by the feed for the viewer-local date and time. */
   activityAt: string;
   title: string;
   durationMinutes: number | null;
   exerciseCount: number;
   setCount: number;
   exerciseNames: string[];
+  hasRecord?: boolean;
 }
 export interface FeedPage {
   items: FeedItem[];
@@ -41,6 +43,7 @@ export interface SharedWorkout {
   title: string;
   startedAt: string;
   completedAt: string;
+  recordSetIds?: string[];
   exercises: {
     id: string;
     exerciseId: string;

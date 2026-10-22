@@ -32,6 +32,7 @@ const isFeedItem = (value: unknown) =>
   typeof value.activityAt === 'string' &&
   Number.isFinite(Date.parse(value.activityAt)) &&
   typeof value.title === 'string' &&
+  (value.hasRecord === undefined || typeof value.hasRecord === 'boolean') &&
   Number.isFinite(value.exerciseCount) &&
   Number.isFinite(value.setCount) &&
   (value.durationMinutes === null || Number.isFinite(value.durationMinutes)) &&
@@ -90,6 +91,12 @@ const validResponse = (path: string, value: unknown) => {
               typeof s.exerciseId === 'string' &&
               typeof s.name === 'string' &&
               isMode(s.loadMode) &&
+              (s.personalBest === undefined ||
+                (isRecord(s.personalBest) &&
+                  Number.isFinite(s.personalBest.weight) &&
+                  Number.isFinite(s.personalBest.reps) &&
+                  typeof s.personalBest.date === 'string' &&
+                  Number.isFinite(Date.parse(s.personalBest.date)))) &&
               Array.isArray(s.points) &&
               s.points.every(
                 (p) =>
@@ -107,6 +114,9 @@ const validResponse = (path: string, value: unknown) => {
       typeof value.id === 'string' &&
       isProfile(value.profile) &&
       typeof value.title === 'string' &&
+      (value.recordSetIds === undefined ||
+        (Array.isArray(value.recordSetIds) &&
+          value.recordSetIds.every((id) => typeof id === 'string'))) &&
       Number.isFinite(Date.parse(String(value.startedAt))) &&
       Number.isFinite(Date.parse(String(value.completedAt))) &&
       Array.isArray(value.exercises) &&

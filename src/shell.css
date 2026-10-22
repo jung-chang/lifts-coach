@@ -1,4 +1,65 @@
 /* Signed-off daily layout: Train, Progress, Community; Coach and profile in chrome. */
+.workout-preview-list,
+.community-feed {
+  display: grid;
+  gap: 14px;
+}
+.workout-preview-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.workout-preview-open {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+}
+.workout-preview-open h2 {
+  margin: 0 0 9px;
+  font-size: 19px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+.workout-preview-open:hover h2 {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.workout-preview-date,
+.workout-preview-metrics {
+  color: var(--sub);
+  font-size: 13px;
+  line-height: 1.7;
+  font-variant-numeric: tabular-nums;
+}
+.workout-preview-metrics {
+  display: flex;
+  gap: 14px;
+  margin: 5px 0 0;
+}
+.workout-preview-owner {
+  margin-bottom: 14px;
+}
+.workout-preview-action {
+  flex-shrink: 0;
+}
+.own-workout-summary {
+  max-width: 920px;
+  margin-inline: auto;
+}
+@media (max-width: 480px) {
+  .workout-preview-row {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .workout-preview-open {
+    flex-basis: 200px;
+  }
+}
 .brand-home {
   border: 0;
   background: none;
@@ -124,6 +185,39 @@
 }
 .summary-private-notes {
   padding-top: 24px;
+}
+.record-star {
+  display: inline-flex;
+  vertical-align: middle;
+  color: #827029;
+}
+.record-star svg {
+  fill: #f1d653;
+  flex-shrink: 0;
+}
+.workout-records {
+  padding: 16px 0;
+}
+.workout-records h3 {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0 0 10px;
+}
+.workout-records ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.workout-records li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.8;
+}
+.exercise-personal-best {
+  margin: 16px 0 0;
+  font-size: 13px;
 }
 .workout-visibility {
   margin-top: 16px;

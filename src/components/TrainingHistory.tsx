@@ -1,10 +1,13 @@
 import { useId, useMemo, useState } from 'react';
-import type { Unit, Workout } from '../../shared/types';
+import type { Exercise, Unit, Workout } from '../../shared/types';
 import { toDisplayWeight } from '../../shared/domain';
 import type { ExerciseStat } from '../../shared/trainingStats';
 import { Button } from './ui/Button';
-import { loadModeLabel } from './LoadSemantics';
+import { loadModeLabel, formatLoadValue } from './LoadSemantics';
+import { personalRecordsFromWorkouts } from '../../shared/personalRecords';
+import { RecordStar } from './PersonalRecords';
 import { SearchPicker } from './SearchPicker';
+import { WorkoutPreviewCard } from './WorkoutPreviewCard';
 
 export interface HistoryItem {
   id: string;
@@ -15,8 +18,19 @@ export interface HistoryItem {
   notes?: string;
   feeling?: string;
   trainingDate?: string;
+  completedAt?: string;
+  exerciseCount?: number;
+  hasRecord?: boolean;
 }
-export function historyItemsFromWorkouts(workouts: Workout[]): HistoryItem[] {
+export function historyItemsFromWorkouts(
+  workouts: Workout[],
+  customExercises: Exercise[] = [],
+): HistoryItem[] {
+  const recordWorkouts = new Set(
+    personalRecordsFromWorkouts(workouts, customExercises).achievements.map(
+      (record) => record.workoutId,
+    ),
+  );
   return workouts
     .filter((w) => w.status === 'finished')
     .slice()
@@ -24,7 +38,12 @@ export function historyItemsFromWorkouts(workouts: Workout[]): HistoryItem[] {
     .map((w) => ({
       id: w.id,
       title: w.name,
+      hasRecord: recordWorkouts.has(w.id),
       date: w.startedAt,
+      completedAt: w.completedAt,
+      exerciseCount: w.exercises.filter((exercise) =>
+        exercise.actualSets.some((set) => set.status === 'completed'),
+      ).length,
       trainingDate: w.trainingDate,
       durationMinutes: w.completedAt
         ? Math.max(0, Math.round((Date.parse(w.completedAt) - Date.parse(w.startedAt)) / 60000))
@@ -150,6 +169,24 @@ export function ExerciseStats({
           <p className="muted small">Complete a few workouts to see how your lifts change.</p>
         </div>
       )}
+      {selected?.personalBest && (
+        <p className="exercise-personal-best">
+          <RecordStar
+            label={
+              selected.loadMode === 'assistance'
+                ? 'Least assistance recorded'
+                : 'Best load recorded'
+            }
+          />{' '}
+          {selected.loadMode === 'assistance' ? 'Least assistance' : 'Best load'}:{' '}
+          {formatLoadValue(
+            selected.loadMode,
+            toDisplayWeight(selected.personalBest.weight, unit),
+            unit,
+          )}
+          <span className="muted"> · {dateLabel(selected.personalBest.date, timeZone)}</span>
+        </p>
+      )}
     </section>
   );
 }
@@ -184,7 +221,7 @@ export function WorkoutHistory({
   );
   const filtering = Boolean(from || to);
   return (
-    <section className="card card-pad" aria-label="Workout history">
+    <section className="workout-history" aria-label="Workout history">
       <div className="history-date-filters">
         <div className="form-field">
           <label htmlFor={`${instanceId}-history-from`}>From</label>
@@ -240,41 +277,26 @@ export function WorkoutHistory({
               : emptyMessage}
         </p>
       ) : (
-        <>
+        <div className="workout-preview-list">
           {filteredItems.map((item) => (
-            <div key={item.id} className="history-item" style={{ alignItems: 'flex-start' }}>
-              <div className="grow">
-                <div className="row space-between">
-                  <div>
-                    <button className="history-workout-link" onClick={() => onWorkout(item.id)}>
-                      <b>{item.title}</b>
-                    </button>
-                    <div className="muted small" style={{ marginTop: 4 }}>
-                      <time dateTime={item.trainingDate || item.date}>
-                        {item.trainingDate
-                          ? dateLabel(`${item.trainingDate}T12:00:00Z`, 'UTC')
-                          : dateLabel(item.date, timeZone)}
-                      </time>
-                      {item.durationMinutes !== null ? ` · ${item.durationMinutes} min` : ''} ·{' '}
-                      {item.setCount} {item.setCount === 1 ? 'set' : 'sets'}
-                    </div>
-                  </div>
-                  {onRepeat && (
-                    <Button size="sm" variant="primary" onClick={() => onRepeat(item.id)}>
-                      Repeat
-                    </Button>
-                  )}
-                </div>
-                {(item.feeling || item.notes) && (
-                  <p className="muted small" style={{ margin: '10px 0 0' }}>
-                    {item.feeling && <b>{item.feeling}. </b>}
-                    {item.notes}
-                  </p>
-                )}
-              </div>
-            </div>
+            <WorkoutPreviewCard
+              key={item.id}
+              title={item.title}
+              completedAt={item.completedAt ?? item.date}
+              exerciseCount={item.exerciseCount}
+              durationMinutes={item.durationMinutes}
+              hasRecord={item.hasRecord}
+              onOpen={() => onWorkout(item.id)}
+              action={
+                onRepeat ? (
+                  <Button size="sm" variant="primary" onClick={() => onRepeat(item.id)}>
+                    Repeat
+                  </Button>
+                ) : undefined
+              }
+            />
           ))}
-        </>
+        </div>
       )}
       {onLoadMore && (
         <div style={{ marginTop: 16 }}>

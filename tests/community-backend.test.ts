@@ -340,21 +340,59 @@ describe('community backend authorization and publication', () => {
       expect(saved.sharing.enabledAt).toBeTruthy();
       const recent = structuredClone(finishedData().workouts[0]);
       recent.id = 'after-setup';
+      recent.name = 'Snapshot workout name';
       recent.startedAt = saved.sharing.enabledAt ?? new Date().toISOString();
+      recent.completedAt = new Date().toISOString();
+      const warmupOnly = structuredClone(recent.exercises[0]);
+      warmupOnly.id = 'warmup-only-instance';
+      warmupOnly.exerciseId = 'ex_dumbbell-bench';
+      warmupOnly.name = 'Dumbbell bench press';
+      warmupOnly.actualSets = warmupOnly.actualSets.map((set) => ({
+        ...set,
+        id: 'warmup-only-set',
+        kind: 'warmup',
+      }));
+      recent.exercises.push(warmupOnly);
+      data.routines = [{ ...createRoutine('Original routine name'), id: 'routine-1' }];
       data.workouts.push(recent);
-      expect(
-        (
-          await call(db, token, '/api/state', 'PUT', {
-            accountId: session.accountId,
-            operationId: 'setup-new',
-            deviceId: 'synthetic',
-            baseRevision: 1,
-            data,
-          })
-        ).status,
-      ).toBe(200);
+      // A later routine rename must not rewrite the historical workout snapshot.
+      data.routines[0].name = 'Renamed routine';
+      const newSync = await call(db, token, '/api/state', 'PUT', {
+        accountId: session.accountId,
+        operationId: 'setup-new',
+        deviceId: 'synthetic',
+        baseRevision: 1,
+        data,
+      });
+      expect(newSync.status, JSON.stringify(await newSync.clone().json())).toBe(200);
       const page = (await (await call(db, token, '/api/community/feed')).json()) as any;
       expect(page.items).toHaveLength(1);
+      expect(page.items[0]).toMatchObject({
+        title: 'Snapshot workout name',
+        exerciseCount: 2,
+        setCount: 1,
+      });
+      expect(page.items[0].durationMinutes).toEqual(expect.any(Number));
+      expect(page.items[0].durationMinutes).toBeGreaterThanOrEqual(0);
+      expect(Date.parse(page.items[0].activityAt)).toBe(Date.parse(recent.completedAt));
+      const detail = (await (
+        await call(db, token, `/api/community/workouts/${page.items[0].id}`)
+      ).json()) as any;
+      expect(detail.title).toBe('Snapshot workout name');
+      db.db
+        .prepare('UPDATE workout_publications SET shared_title=NULL WHERE id=?')
+        .run(page.items[0].id);
+      const legacyPage = (await (await call(db, token, '/api/community/feed')).json()) as any;
+      expect(legacyPage.items[0]).toMatchObject({
+        id: page.items[0].id,
+        title: 'Snapshot workout name',
+        activityAt: page.items[0].activityAt,
+        exerciseCount: 2,
+      });
+      const legacyDetail = (await (
+        await call(db, token, `/api/community/workouts/${legacyPage.items[0].id}`)
+      ).json()) as any;
+      expect(legacyDetail.title).toBe('Snapshot workout name');
       expect(
         db.db
           .prepare('SELECT visibility FROM workout_visibility WHERE account_id=? AND workout_id=?')
@@ -400,6 +438,90 @@ describe('community backend authorization and publication', () => {
         enabledAt: null,
         policyRevision: 2,
       });
+    } finally {
+      db.db.close();
+    }
+  });
+  it('keeps a synced private choice ahead of auto-publish and does not auto-publish after it is turned off', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1();
+    try {
+      const token = await auth('auto-override@example.test', 'auto-override');
+      const session = (await (await call(db, token, '/api/session')).json()) as any;
+      const enabled = (await (
+        await call(db, token, '/api/me/sharing', 'PATCH', {
+          summaryEnabled: false,
+          autoPublishWorkouts: true,
+          policyRevision: session.sharing.policyRevision,
+          audienceAcknowledged: true,
+        })
+      ).json()) as any;
+      const data = finishedData();
+      data.workouts[0].startedAt = enabled.sharing.enabledAt;
+      data.workouts[0].completedAt = new Date().toISOString();
+      data.workouts[0].communityVisibility = {
+        visibility: 'private',
+        policyRevision: enabled.sharing.policyRevision,
+      };
+      const sync = {
+        accountId: session.accountId,
+        operationId: 'private-override',
+        deviceId: 'synthetic-device',
+        baseRevision: 0,
+        data,
+      };
+      expect((await call(db, token, '/api/state', 'PUT', sync)).status).toBe(200);
+      expect((await call(db, token, '/api/state', 'PUT', sync)).status).toBe(200);
+      expect(((await (await call(db, token, '/api/community/feed')).json()) as any).items).toEqual(
+        [],
+      );
+      expect(
+        db.db
+          .prepare('SELECT visibility FROM workout_visibility WHERE workout_id=?')
+          .get('workout-1'),
+      ).toEqual({ visibility: 'private' });
+      expect(db.db.prepare('SELECT COUNT(*) count FROM workout_publications').get()).toEqual({
+        count: 0,
+      });
+
+      const disabled = (await (
+        await call(db, token, '/api/me/sharing', 'PATCH', {
+          summaryEnabled: false,
+          autoPublishWorkouts: false,
+          policyRevision: enabled.sharing.policyRevision,
+          audienceAcknowledged: false,
+        })
+      ).json()) as any;
+      const newer = structuredClone(data.workouts[0]);
+      newer.id = 'after-auto-off';
+      newer.name = 'Auto off workout';
+      newer.startedAt = new Date().toISOString();
+      newer.completedAt = new Date().toISOString();
+      delete newer.communityVisibility;
+      data.workouts.push(newer);
+      expect(
+        (
+          await call(db, token, '/api/state', 'PUT', {
+            accountId: session.accountId,
+            operationId: 'auto-off-sync',
+            deviceId: 'synthetic-device',
+            baseRevision: 1,
+            data,
+          })
+        ).status,
+      ).toBe(200);
+      expect(disabled.sharing.autoPublishWorkouts).toBe(false);
+      expect(
+        db.db
+          .prepare('SELECT visibility FROM workout_visibility WHERE workout_id=?')
+          .get('after-auto-off'),
+      ).toEqual({ visibility: 'private' });
+      expect(((await (await call(db, token, '/api/community/feed')).json()) as any).items).toEqual(
+        [],
+      );
     } finally {
       db.db.close();
     }
@@ -464,6 +586,7 @@ describe('community backend authorization and publication', () => {
     const shared = (await (await call(db, member, path)).json()) as any;
     expect(shared.statsVisible).toBe(true);
     expect(shared.exerciseStats[0].points.map((p: any) => p.weight)).toEqual([80, 100]);
+    expect(shared.exerciseStats[0].personalBest).toMatchObject({ weight: 100, reps: 8 });
     expect(shared.workouts).toEqual([]);
     expect(
       (
@@ -537,6 +660,112 @@ describe('community backend authorization and publication', () => {
     db.db.close();
   });
 
+  it('derives shared record stars from each owner’s full history without exposing private baselines', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1();
+    const owner = await auth('pr-owner@example.test', 'pr-owner');
+    const viewer = await auth('pr-viewer@example.test', 'pr-viewer');
+    const session = (await (await call(db, owner, '/api/session')).json()) as any;
+    const viewerSession = (await (await call(db, viewer, '/api/session')).json()) as any;
+    const data = finishedData();
+    const template = data.workouts[0];
+    data.workouts = [100, 110, 105, 120].map((weight, index) => {
+      const workout = structuredClone(template);
+      workout.id = `record-session-${index}`;
+      workout.startedAt = `2026-10-0${index + 1}T12:00:00Z`;
+      workout.completedAt = `2026-10-0${index + 1}T13:00:00Z`;
+      workout.updatedAt = workout.completedAt;
+      const set = workout.exercises[0].actualSets[0];
+      set.id = `record-set-${index}`;
+      set.weight = weight;
+      set.reps = index === 3 ? 1 : 8;
+      set.completedAt = workout.completedAt;
+      return workout;
+    });
+    expect(
+      (
+        await call(db, owner, '/api/state', 'PUT', {
+          accountId: session.accountId,
+          operationId: 'records-initial',
+          deviceId: 'synthetic',
+          baseRevision: 0,
+          data,
+        })
+      ).status,
+    ).toBe(200);
+    // The viewer has lifted more than the author; that must not suppress the author's PR.
+    const viewerData = finishedData();
+    viewerData.workouts[0].exercises[0].actualSets[0].weight = 500;
+    expect(
+      (
+        await call(db, viewer, '/api/state', 'PUT', {
+          accountId: viewerSession.accountId,
+          operationId: 'viewer-record',
+          deviceId: 'synthetic',
+          baseRevision: 0,
+          data: viewerData,
+        })
+      ).status,
+    ).toBe(200);
+    for (const index of [2, 3]) {
+      expect(
+        (
+          await call(db, owner, `/api/me/workouts/record-session-${index}/visibility`, 'PUT', {
+            visibility: 'community',
+            decisionRevision: 0,
+            policyRevision: session.sharing.policyRevision,
+            audienceAcknowledged: true,
+          })
+        ).status,
+      ).toBe(200);
+    }
+    const page = (await (await call(db, viewer, '/api/community/feed')).json()) as any;
+    expect(page.items).toHaveLength(2);
+    const shared = await Promise.all(
+      page.items.map(async (item: any) => ({
+        item,
+        detail: (await (
+          await call(db, viewer, `/api/community/workouts/${item.id}`)
+        ).json()) as any,
+      })),
+    );
+    const lower = shared.find(({ detail }) => detail.exercises[0].sets[0].weight === 105)!;
+    const higher = shared.find(({ detail }) => detail.exercises[0].sets[0].weight === 120)!;
+    expect(lower.item.hasRecord).toBe(false);
+    expect(lower.detail.recordSetIds).toEqual([]);
+    expect(higher.item.hasRecord).toBe(true);
+    expect(higher.detail.recordSetIds).toEqual(['record-set-3']);
+    expect(JSON.stringify(shared)).not.toContain('record-session-1');
+    expect(JSON.stringify(shared)).not.toContain('private note');
+    expect(JSON.stringify(shared)).not.toContain('"weight":110');
+    const profilePath = `/api/community/profiles/${session.profile.publicId}`;
+    expect(((await (await call(db, viewer, profilePath)).json()) as any).exerciseStats).toEqual([]);
+    const own = (await (await call(db, owner, profilePath)).json()) as any;
+    expect(own.exerciseStats[0].personalBest).toMatchObject({ weight: 120, reps: 1 });
+    // Correcting a private earlier lift must remove the later public achievement.
+    data.workouts[1].exercises[0].actualSets[0].weight = 130;
+    expect(
+      (
+        await call(db, owner, '/api/state', 'PUT', {
+          accountId: session.accountId,
+          operationId: 'records-corrected',
+          deviceId: 'synthetic',
+          baseRevision: 1,
+          data,
+        })
+      ).status,
+    ).toBe(200);
+    const corrected = (await (
+      await call(db, viewer, `/api/community/workouts/${higher.item.id}`)
+    ).json()) as any;
+    expect(corrected.recordSetIds).toEqual([]);
+    const correctedFeed = (await (await call(db, viewer, '/api/community/feed')).json()) as any;
+    expect(correctedFeed.items.every((item: any) => !item.hasRecord)).toBe(true);
+    db.db.close();
+  });
   it('selects lower assistance as the qualified record at matching reps', async () => {
     vi.stubGlobal(
       'fetch',
@@ -741,7 +970,7 @@ describe('community backend authorization and publication', () => {
     const page = (await feed.json()) as any;
     expect(page.items).toHaveLength(1);
     expect(page.items[0].profile.publicId).toBe(os.profile.publicId);
-    expect(page.items[0].title).toMatch(/^Workout · /);
+    expect(page.items[0].title).toBe('Upper session');
     expect(page.items[0].setCount).toBe(1);
     expect(page.items[0].exerciseNames).toEqual(['Barbell bench press']);
     expect(JSON.stringify(page)).not.toContain('private note');

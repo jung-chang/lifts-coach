@@ -54,7 +54,15 @@ export function WorkoutVisibilityControl({ session, workout, synced, onLocalChan
   const current =
     workout.status === 'active'
       ? (workout.communityVisibility?.visibility ?? 'private')
-      : choice.visibility;
+      : loaded
+        ? choice.visibility
+        : (workout.communityVisibility?.visibility ??
+          (session?.sharing.autoPublishWorkouts &&
+          session.sharing.audienceAcknowledgedAt &&
+          session.sharing.enabledAt &&
+          Date.parse(workout.startedAt) >= Date.parse(session.sharing.enabledAt)
+            ? 'community'
+            : 'private'));
   const apply = async (visibility: 'private' | 'community') => {
     if (!session) return;
     const ticket = generation.current;
@@ -102,7 +110,11 @@ export function WorkoutVisibilityControl({ session, workout, synced, onLocalChan
         <div>
           <b>Workout visibility</b>
           <p className="muted small">
-            {current === 'community' ? 'Community · completed exercises and sets' : 'Only me'}
+            {current === 'community'
+              ? !synced
+                ? 'Community after sync'
+                : 'Community · completed exercises and sets'
+              : 'Only me'}
           </p>
         </div>
         <Button
@@ -131,7 +143,7 @@ export function WorkoutVisibilityControl({ session, workout, synced, onLocalChan
         open={review}
         onOpenChange={setReview}
         title="Share with the community?"
-        description="All active Lifts Coach members can see your name, workout date, exercise names and completed sets, including loads and reps. Notes and Coach conversations stay private."
+        description="All active Lifts Coach members can see your name, routine name, workout date, exercise names and completed sets, including loads, reps and personal-record stars. Notes and Coach conversations stay private."
       >
         <h3>{workout.name}</h3>
         <ul className="sharing-exercise-preview">

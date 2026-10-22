@@ -58,7 +58,15 @@ describe('WorkoutHistory date filters', () => {
     fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-10-01' } });
     fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-10-01' } });
     expect(screen.getByRole('button', { name: 'Before' })).toBeTruthy();
-    expect(screen.getByText('Oct 1, 2026')).toBeTruthy();
+    expect(
+      screen.getByText(
+        new Date(items[0].date).toLocaleDateString(undefined, {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+        }),
+      ),
+    ).toBeTruthy();
   });
   it('includes both local date boundaries and shows date and duration metadata', () => {
     renderHistory();
@@ -69,7 +77,10 @@ describe('WorkoutHistory date filters', () => {
     expect(screen.queryByText('Before')).toBeNull();
     expect(screen.getByText('End day')).toBeTruthy();
     expect(screen.queryByText('After')).toBeNull();
-    expect(screen.getByText('Oct 1, 2026').parentElement?.textContent).toContain('35 min · 6 sets');
+    const card = screen.getByText('Start day').closest('article')!;
+    expect(card.textContent).toContain('35 min');
+    expect(card.textContent).not.toContain('6 sets');
+    expect(card.querySelector('time')?.getAttribute('datetime')).toBe(items[1].date);
   });
 
   it('clears the range and restores all loaded history', () => {
