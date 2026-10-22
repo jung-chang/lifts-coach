@@ -505,6 +505,12 @@ async function accountPersonalRecords(env: Env, accountId: string) {
     ...personalRecordsFromWorkouts(state.data.workouts, state.data.exercises),
     revision: state.revision,
     workoutNames: new Map(state.data.workouts.map((workout) => [workout.id, workout.name])),
+    workoutExerciseNames: new Map(
+      state.data.workouts.map((workout) => [
+        workout.id,
+        new Map(workout.exercises.map((exercise) => [exercise.id, exercise.name])),
+      ]),
+    ),
   };
 }
 async function feedItems(
@@ -541,10 +547,10 @@ async function feedItems(
       recordsByAccount.set(row.accountId, await accountPersonalRecords(env, row.accountId));
     const personalRecords = recordsByAccount.get(row.accountId)!;
     const names = await env.DB.prepare(
-      "SELECT exercise_id exerciseId FROM training_sets WHERE account_id=? AND workout_id=? AND kind='working' GROUP BY exercise_instance_id ORDER BY exercise_instance_id LIMIT 2",
+      "SELECT exercise_id exerciseId,exercise_instance_id exerciseInstanceId FROM training_sets WHERE account_id=? AND workout_id=? AND kind='working' GROUP BY exercise_instance_id ORDER BY exercise_instance_id LIMIT 2",
     )
       .bind(row.accountId, row.workoutId)
-      .all<{ exerciseId: string }>();
+      .all<{ exerciseId: string; exerciseInstanceId: string }>();
     items.push({
       id: row.id,
       profile: {
@@ -565,7 +571,12 @@ async function feedItems(
       ),
       exerciseCount: summary.exerciseCount,
       setCount: summary.setCount,
-      exerciseNames: names.results.map((x) => exerciseLabel(x.exerciseId)),
+      exerciseNames: names.results.map(
+        (x) =>
+          (personalRecords.revision === row.sourceRevision
+            ? personalRecords.workoutExerciseNames.get(row.workoutId)?.get(x.exerciseInstanceId)
+            : undefined) || exerciseLabel(x.exerciseId),
+      ),
       hasRecord:
         personalRecords.revision === row.sourceRevision &&
         personalRecords.achievements.some((record) => record.workoutId === row.workoutId),
@@ -741,6 +752,11 @@ app.get('/api/community/workouts/:publicationId', async (c) => {
   )
     .bind(row.accountId, row.workoutId)
     .all<Record<string, any>>();
+  const personalRecords = await accountPersonalRecords(c.env, row.accountId);
+  const exerciseNames =
+    personalRecords.revision === row.sourceRevision
+      ? personalRecords.workoutExerciseNames.get(row.workoutId)
+      : undefined;
   const groups = new Map<string, any>();
   for (const s of sets.results) {
     const k = s.exerciseInstanceId;
@@ -748,7 +764,7 @@ app.get('/api/community/workouts/:publicationId', async (c) => {
       groups.set(k, {
         id: k,
         exerciseId: s.exerciseId,
-        name: exerciseLabel(s.exerciseId),
+        name: exerciseNames?.get(k) || exerciseLabel(s.exerciseId),
         loadMode: s.loadMode,
         sets: [],
       });
@@ -760,7 +776,6 @@ app.get('/api/community/workouts/:publicationId', async (c) => {
       loadMode: s.loadMode,
     });
   }
-  const personalRecords = await accountPersonalRecords(c.env, row.accountId);
   const recordSetIds =
     personalRecords.revision === row.sourceRevision
       ? personalRecords.achievements

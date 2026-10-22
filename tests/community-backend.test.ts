@@ -160,6 +160,65 @@ function finishedData() {
 }
 
 describe('community backend authorization and publication', () => {
+  it('shows shared custom exercise snapshot names without adding them to the viewer library', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1();
+    const owner = await auth('owner@example.test', 'owner-sub');
+    const member = await auth('member@example.test', 'member-sub');
+    const session = (await (await call(db, owner, '/api/session')).json()) as any;
+    const viewerBefore = await (await call(db, member, '/api/state')).json();
+    const consent = await call(db, owner, '/api/me/sharing', 'PATCH', {
+      summaryEnabled: false,
+      autoPublishWorkouts: true,
+      policyRevision: session.sharing.policyRevision,
+      audienceAcknowledged: true,
+    });
+    expect(consent.status).toBe(200);
+    const data = finishedData();
+    const exercise = data.workouts[0].exercises[0];
+    exercise.exerciseId = 'custom-synthetic-row';
+    exercise.name = 'Single-arm cable row';
+    // Historical snapshots must work even without a current library definition.
+    expect(data.exercises).toEqual([]);
+    const second = structuredClone(exercise);
+    second.id = 'instance-2';
+    second.name = 'Cable row with pause';
+    second.actualSets[0].id = 'set-2';
+    data.workouts[0].exercises.push(second);
+    expect(
+      (
+        await call(db, owner, '/api/state', 'PUT', {
+          accountId: session.accountId,
+          operationId: 'sync-custom-names',
+          deviceId: 'synthetic-device',
+          baseRevision: 0,
+          data,
+        })
+      ).status,
+    ).toBe(200);
+    const names = ['Single-arm cable row', 'Cable row with pause'];
+    for (const path of [
+      '/api/community/feed',
+      `/api/community/profiles/${session.profile.publicId}/workouts`,
+    ]) {
+      const response = await call(db, member, path);
+      expect(response.status).toBe(200);
+      const page = (await response.json()) as any;
+      expect(page.items[0].exerciseNames).toEqual(names);
+      const detail = await call(db, member, `/api/community/workouts/${page.items[0].id}`);
+      expect(detail.status).toBe(200);
+      const body = (await detail.json()) as any;
+      expect(body.exercises.map((entry: any) => entry.name)).toEqual(names);
+      expect(JSON.stringify(body)).not.toContain('synthetic private exercise note');
+      expect(body.exercises[0]).not.toHaveProperty('notes');
+      expect(body.exercises[0]).not.toHaveProperty('repsInReserve');
+    }
+    expect(await (await call(db, member, '/api/state')).json()).toEqual(viewerBefore);
+  });
+
   it('lets any admitted member generate a routine through the provider and save only after approval', async () => {
     const routine = {
       ...createRoutine('Synthetic AI routine'),
@@ -972,7 +1031,7 @@ describe('community backend authorization and publication', () => {
     expect(page.items[0].profile.publicId).toBe(os.profile.publicId);
     expect(page.items[0].title).toBe('Upper session');
     expect(page.items[0].setCount).toBe(1);
-    expect(page.items[0].exerciseNames).toEqual(['Barbell bench press']);
+    expect(page.items[0].exerciseNames).toEqual(['Bench press']);
     expect(JSON.stringify(page)).not.toContain('private note');
     expect(JSON.stringify(page)).not.toContain('synthetic private exercise note');
     const sharedProfile = await call(db, member, `/api/community/profiles/${os.profile.publicId}`);
@@ -1038,6 +1097,7 @@ describe('community backend authorization and publication', () => {
       .run(os.accountId);
     const detailResponse = await call(db, member, `/api/community/workouts/${page.items[0].id}`);
     const detail = (await detailResponse.json()) as any;
+    expect(detail.exercises[0].name).toBe('Bench press');
     expect(detail.exercises[0].sets[0]).toMatchObject({
       weight: 100,
       reps: 8,
