@@ -54,6 +54,29 @@
   padding-bottom: 24px;
   color: var(--sub);
   font-size: 13px;
+  margin: 0;
+}
+.summary-metadata > div {
+  display: grid;
+  gap: 6px;
+}
+.summary-metadata > div:first-child {
+  flex-basis: 100%;
+}
+.summary-metadata dt {
+  font-size: 12px;
+}
+.summary-metadata dd {
+  margin: 0;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.summary-timezone {
+  color: var(--sub);
+}
+.workout-details > .page-heading {
+  gap: 16px;
+  flex-wrap: wrap;
 }
 .summary-exercise {
   padding: 24px 0;
@@ -61,7 +84,7 @@
 .summary-exercise + .summary-exercise {
   border-top: 1px solid var(--border);
 }
-.summary-exercise h2 {
+.summary-exercise-title {
   font-size: 17px;
   margin: 0;
 }
@@ -75,6 +98,7 @@
   border-collapse: collapse;
   font-size: 13px;
   table-layout: fixed;
+  font-variant-numeric: tabular-nums;
 }
 .summary-set-table td,
 .summary-set-table th {
@@ -97,9 +121,6 @@
 }
 .summary-set-table th:nth-child(2) {
   width: 40%;
-}
-.summary-completed {
-  color: var(--green);
 }
 .summary-private-notes {
   padding-top: 24px;

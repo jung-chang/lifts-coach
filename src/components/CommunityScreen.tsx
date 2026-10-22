@@ -12,6 +12,7 @@ import { catalog } from '../../shared/catalog';
 import { Button } from './ui/Button';
 import { TimezonePicker } from './TimezonePicker';
 import { formatLoadValue } from './LoadSemantics';
+import { WorkoutDetails } from './WorkoutDetails';
 import {
   blockProfile,
   getFeed,
@@ -936,88 +937,26 @@ function SharedWorkoutContent({
   unit: Unit;
   onProfile: () => void;
 }) {
-  const duration = Math.max(
-    0,
-    Math.round(
-      (new Date(workout.completedAt).getTime() - new Date(workout.startedAt).getTime()) / 60000,
-    ),
-  );
-  const exercises = workout.exercises.filter((exercise) => exercise.sets.length > 0);
   return (
     <div className="community-workout-detail">
       <button className="community-profile-link community-workout-owner" onClick={onProfile}>
         <Avatar profile={workout.profile} small />
         <span>{workout.profile.displayName}</span>
       </button>
-      <h2>{workout.title}</h2>
-      <p className="muted">
-        {dateTime(workout.completedAt, workout.profile.trainingTimezone)}
-        {duration > 0 ? ` · ${duration} min` : ''}
-      </p>
-      <div className="community-workout-summary">
-        <div>
-          <strong>{exercises.length}</strong>
-          <span>Exercises</span>
-        </div>
-        <div>
-          <strong>
-            {exercises.reduce(
-              (sum, e) => sum + e.sets.filter((s) => s.kind === 'working').length,
-              0,
-            )}
-          </strong>
-          <span>Working sets</span>
-        </div>
-        <div>
-          <strong>
-            {exercises.reduce(
-              (sum, e) => sum + e.sets.filter((s) => s.kind === 'warmup').length,
-              0,
-            )}
-          </strong>
-          <span>Warm-ups</span>
-        </div>
-      </div>
-      {exercises.map((exercise) => (
-        <section key={exercise.id} className="community-exercise">
-          <div className="community-exercise-heading">
-            <h3>{exercise.name}</h3>
-            <span>
-              {exercise.loadMode === 'per-dumbbell'
-                ? 'Per dumbbell'
-                : exercise.loadMode === 'bodyweight'
-                  ? 'Bodyweight'
-                  : exercise.loadMode === 'assistance'
-                    ? 'Assistance'
-                    : 'Total load'}
-            </span>
-          </div>
-          <table className="community-set-table">
-            <thead>
-              <tr>
-                <th>Set</th>
-                <th>Load</th>
-                <th>Reps</th>
-                <th>Type</th>
-              </tr>
-            </thead>
-            <tbody>
-              {exercise.sets.map((set, index) => {
-                const mode =
-                  (set as typeof set & { loadMode?: LoadMode }).loadMode ?? exercise.loadMode;
-                return (
-                  <tr key={set.id}>
-                    <td>{index + 1}</td>
-                    <td>{displayLoad(mode, set.weight, unit)}</td>
-                    <td>{set.reps}</td>
-                    <td>{set.kind === 'warmup' ? 'Warm-up' : 'Working'}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
-      ))}
+      <WorkoutDetails
+        title={workout.title}
+        startedAt={workout.startedAt}
+        completedAt={workout.completedAt}
+        timeZone={workout.profile.trainingTimezone}
+        exercises={workout.exercises.map((exercise) => ({
+          ...exercise,
+          sets: exercise.sets.map((set) => ({
+            ...set,
+            loadMode: set.loadMode ?? exercise.loadMode,
+          })),
+        }))}
+        unit={unit}
+      />
     </div>
   );
 }

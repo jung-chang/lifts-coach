@@ -232,6 +232,10 @@ describe('workout set table', () => {
     expect(screen.getAllByRole('table', { name: /completed sets/ })).toHaveLength(2);
     expect(screen.getByRole('heading', { name: 'Synthetic second exercise' })).toBeTruthy();
     expect(document.querySelector('.summary-exercise details')).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: 'Done' })).toBeNull();
+    expect(screen.queryByRole('columnheader', { name: 'Type' })).toBeNull();
+    expect(screen.getByText('Finished')).toBeTruthy();
+    expect(screen.getByText('Duration')).toBeTruthy();
     expect(screen.getAllByRole('button', { name: 'Repeat' })).toHaveLength(1);
   });
 

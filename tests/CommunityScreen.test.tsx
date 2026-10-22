@@ -280,7 +280,16 @@ describe('CommunityScreen', () => {
     const table = await screen.findByRole('table');
     expect(within(table).getAllByRole('row')).toHaveLength(3);
     expect(within(table).getAllByText('25 lb each')).toHaveLength(2);
-    expect(within(table).getByText('Warm-up')).toBeTruthy();
+    expect(within(table).getByText('Warm-up 1')).toBeTruthy();
+    expect(
+      within(table)
+        .getAllByRole('columnheader')
+        .map((cell) => cell.textContent),
+    ).toEqual(['Set', 'Load', 'Reps']);
+    expect(screen.getByText('Finished')).toBeTruthy();
+    expect(screen.getByText('Duration')).toBeTruthy();
+    expect(screen.getByText('40 min')).toBeTruthy();
+    expect(screen.getByText(/UTC/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Complete|Edit/ })).toBeNull();
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining('/api/community/feed'),
