@@ -8,6 +8,7 @@ import { personalRecordsFromWorkouts } from '../../shared/personalRecords';
 import { RecordStar } from './PersonalRecords';
 import { SearchPicker } from './SearchPicker';
 import { WorkoutPreviewCard } from './WorkoutPreviewCard';
+import { DateRangePicker } from './DateRangePicker';
 
 export interface HistoryItem {
   id: string;
@@ -208,7 +209,6 @@ export function WorkoutHistory({
   emptyMessage?: string;
   timeZone?: string;
 }) {
-  const instanceId = useId();
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const filteredItems = useMemo(
@@ -222,47 +222,14 @@ export function WorkoutHistory({
   const filtering = Boolean(from || to);
   return (
     <section className="workout-history" aria-label="Workout history">
-      <div className="history-date-filters">
-        <div className="form-field">
-          <label htmlFor={`${instanceId}-history-from`}>From</label>
-          <input
-            id={`${instanceId}-history-from`}
-            className="input"
-            type="date"
-            max={to || undefined}
-            value={from}
-            onChange={(event) => setFrom(event.target.value)}
-          />
-        </div>
-        <div className="form-field">
-          <label htmlFor={`${instanceId}-history-to`}>To</label>
-          <input
-            id={`${instanceId}-history-to`}
-            className="input"
-            type="date"
-            min={from || undefined}
-            value={to}
-            onChange={(event) => setTo(event.target.value)}
-          />
-        </div>
-        {filtering && (
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => {
-              setFrom('');
-              setTo('');
-            }}
-          >
-            Clear dates
-          </Button>
-        )}
-      </div>
-      {from && to && from > to && (
-        <p className="muted small" role="alert">
-          Choose an end date on or after the start date.
-        </p>
-      )}
+      <DateRangePicker
+        from={from}
+        to={to}
+        onChange={(nextFrom, nextTo) => {
+          setFrom(nextFrom);
+          setTo(nextTo);
+        }}
+      />
       {filtering && onLoadMore && (
         <p className="muted small" style={{ margin: '0 0 12px' }}>
           Matches among workouts loaded so far.

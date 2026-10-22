@@ -45,6 +45,12 @@ const renderHistory = (onLoadMore = vi.fn()) =>
   );
 
 afterEach(cleanup);
+const setRange = (from: string, to = '') => {
+  fireEvent.click(screen.getByRole('button', { name: /^Date range:/ }));
+  fireEvent.change(screen.getByLabelText('From'), { target: { value: from } });
+  fireEvent.change(screen.getByLabelText('To'), { target: { value: to } });
+  fireEvent.click(screen.getByRole('button', { name: 'Apply dates' }));
+};
 
 describe('WorkoutHistory date filters', () => {
   it('preserves a captured training day when the profile timezone changes', () => {
@@ -55,8 +61,7 @@ describe('WorkoutHistory date filters', () => {
         onWorkout={vi.fn()}
       />,
     );
-    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-10-01' } });
-    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-10-01' } });
+    setRange('2026-10-01', '2026-10-01');
     expect(screen.getByRole('button', { name: 'Before' })).toBeTruthy();
     expect(
       screen.getByText(
@@ -70,8 +75,7 @@ describe('WorkoutHistory date filters', () => {
   });
   it('includes both local date boundaries and shows date and duration metadata', () => {
     renderHistory();
-    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-10-01' } });
-    fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-10-02' } });
+    setRange('2026-10-01', '2026-10-02');
 
     expect(screen.getByText('Start day')).toBeTruthy();
     expect(screen.queryByText('Before')).toBeNull();
@@ -85,7 +89,7 @@ describe('WorkoutHistory date filters', () => {
 
   it('clears the range and restores all loaded history', () => {
     renderHistory();
-    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-10-02' } });
+    setRange('2026-10-02');
     expect(screen.queryByText('Start day')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Clear dates' }));
     expect(screen.getByText('Start day')).toBeTruthy();
@@ -95,7 +99,7 @@ describe('WorkoutHistory date filters', () => {
   it('shows a no-match state while keeping pagination available', () => {
     const loadMore = vi.fn();
     renderHistory(loadMore);
-    fireEvent.change(screen.getByLabelText('From'), { target: { value: '2027-01-01' } });
+    setRange('2027-01-01');
     expect(screen.getByText('No workouts match these dates.')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
     expect(loadMore).toHaveBeenCalledOnce();

@@ -104,13 +104,18 @@ export function ProgressCalendar({
             <button
               key={key}
               type="button"
-              aria-label={`${fullDate}${count ? `, ${count} completed ${count === 1 ? 'workout' : 'workouts'}` : ''}`}
+              aria-label={`${fullDate}${key === today ? ', Today' : ''}${count ? `, ${count} completed ${count === 1 ? 'workout' : 'workouts'}` : ''}`}
               aria-pressed={isSelected}
               aria-current={key === today ? 'date' : undefined}
               className={`progress-calendar-day${count ? ' has-workout' : ''}${isSelected ? ' selected' : ''}`}
               onClick={() => setSelectedDay(key)}
             >
               <span>{day}</span>
+              {key === today && (
+                <span className="calendar-today-label" aria-hidden="true">
+                  Today
+                </span>
+              )}
               {count > 0 && (
                 <span className="progress-calendar-dots" aria-hidden="true">
                   {count > 1 ? count : '•'}
