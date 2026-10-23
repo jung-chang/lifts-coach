@@ -39,6 +39,7 @@ import {
   fromDisplayWeight,
   id,
   replaceWorkoutExercise,
+  addCustomExercise,
   deleteRoutine,
   updateWorkoutFeedback,
   previousExerciseNote,
@@ -66,6 +67,7 @@ import { RoutineEditor } from './components/RoutineEditor';
 import { ProfileSetup } from './components/ProfileSetup';
 import { SetTable } from './components/SetTable';
 import { SearchPicker } from './components/SearchPicker';
+import { CreateExercise } from './components/CreateExercise';
 import { FirstRunOnboarding } from './components/FirstRunOnboarding';
 import { formatLoadValue } from './components/LoadSemantics';
 import { SyncDetails } from './components/SyncDetails';
@@ -288,13 +290,14 @@ function App() {
     if (!data) return;
     let before: AppData | undefined;
     let changed = false;
-    void safeUpdate((d) => {
+    return safeUpdate((d) => {
       const next = fn(d);
       changed = next !== d;
       if (changed) before = d;
       return next;
     }).then((ok) => {
       if (ok && changed) setUndo(label && before ? { data: before, label } : null);
+      return ok;
     });
   };
   const setChange = (fn: (d: AppData) => AppData, label = 'Set updated') => mutate(fn, label);
@@ -1130,8 +1133,6 @@ function App() {
                   skipRest={skipRest}
                   finish={finish}
                   requestDiscard={() => setDiscardWorkoutRequested(workout!.id)}
-                  setUndo={undoLast}
-                  undo={notice ? null : undo}
                   say={say}
                   mutate={mutate}
                   saveFeedback={(
@@ -1403,7 +1404,7 @@ function App() {
         <div className="toast" role="status">
           <CheckCircle2 className="toast-icon" size={17} />
           <span className="toast-message">{notice}</span>
-          {undo && (
+          {undo && !(tab === 'train' && workout?.status === 'active') && (
             <button onClick={undoLast}>
               <Undo2 size={14} style={{ verticalAlign: 'middle' }} /> Undo
             </button>
@@ -1829,12 +1830,12 @@ function WorkoutScreen({
   skipRest,
   finish,
   requestDiscard,
-  setUndo,
-  undo,
   say,
   mutate,
   saveFeedback,
 }: any) {
+  const [replacementOpen, setReplacementOpen] = useState(false);
+  const [customName, setCustomName] = useState<string | null>(null);
   const unit = data.settings.unit;
   const ex = activeExercise as WorkoutExercise | undefined;
   const elapsedSeconds = Math.max(0, Math.floor((timerNow - Date.parse(workout.startedAt)) / 1000));
@@ -1915,6 +1916,9 @@ function WorkoutScreen({
                 </div>
                 <SearchPicker
                   key={ex.id}
+                  open={replacementOpen}
+                  onOpenChange={setReplacementOpen}
+                  onCreate={setCustomName}
                   label="Replace exercise"
                   searchLabel="Search replacement exercises"
                   value={ex.exerciseId}
@@ -1932,6 +1936,39 @@ function WorkoutScreen({
                   placeholder="Name, muscle, or equipment"
                   emptyMessage="No exercises found."
                 />
+                <Sheet
+                  open={customName !== null}
+                  onOpenChange={(open) => !open && setCustomName(null)}
+                  title="Create exercise"
+                >
+                  {customName !== null && (
+                    <CreateExercise
+                      initialName={customName}
+                      onCancel={() => {
+                        setCustomName(null);
+                        setReplacementOpen(true);
+                      }}
+                      onSave={async (exercise) => {
+                        const saved = await mutate((current: AppData) =>
+                          replaceWorkoutExercise(
+                            addCustomExercise(current, exercise),
+                            workout.id,
+                            ex.id,
+                            exercise.id,
+                          ),
+                        );
+                        if (saved) {
+                          setCustomName(null);
+                          if (ex.actualSets.some((set) => set.status === 'completed')) {
+                            setCurrentEx(currentEx + 1);
+                          }
+                          say(`${exercise.name} saved and substituted for today`);
+                        }
+                        return !!saved;
+                      }}
+                    />
+                  )}
+                </Sheet>
                 <span className="muted small">
                   {formatLoadValue(ex.loadMode, toDisplayWeight(ex.targetWeight, unit), unit)} ·{' '}
                   target {ex.sets} × {ex.repRange[0]}–{ex.repRange[1]}
@@ -1973,16 +2010,6 @@ function WorkoutScreen({
               )
             }
           />
-          {undo && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={setUndo}
-              aria-label="Undo last workout action"
-            >
-              <Undo2 size={15} /> Undo
-            </Button>
-          )}
           <ExerciseFeedback
             key={`${workout.id}:${ex.id}:${ex.exerciseId}`}
             exercise={ex}

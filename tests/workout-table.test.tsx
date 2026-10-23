@@ -52,6 +52,81 @@ async function beginWorkout() {
 }
 
 describe('workout set table', () => {
+  it('creates a missing replacement, preserves completed sets, and keeps it after reopening', async () => {
+    await beginWorkout();
+    const routines = structuredClone(fixture.data.routines);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Set 1 done' }));
+    await waitFor(() =>
+      expect(fixture.data.workouts[0].exercises[0].actualSets[0].status).toBe('completed'),
+    );
+    const completed = structuredClone(fixture.data.workouts[0].exercises[0].actualSets[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Replace exercise' }));
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search replacement exercises' }), {
+      target: { value: 'Synthetic cable press' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create exercise' }));
+    expect(screen.getByRole('textbox', { name: 'Exercise name' })).toHaveProperty(
+      'value',
+      'Synthetic cable press',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Create and switch' }));
+    expect(screen.getByRole('alert').textContent).toContain('Complete all exercise details');
+    expect(fixture.data.exercises).toHaveLength(0);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Equipment' }), {
+      target: { value: 'Cable' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Primary muscles' }), {
+      target: { value: 'Chest, triceps' },
+    });
+    fireEvent.change(screen.getByRole('textbox', { name: 'Instructions' }), {
+      target: { value: 'Press forward with control.' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Create and switch' }));
+    await waitFor(() => expect(fixture.data.exercises).toHaveLength(1));
+    expect(fixture.data.workouts[0].exercises[0].actualSets).toContainEqual(completed);
+    expect(fixture.data.workouts[0].exercises[1].exerciseId).toBe(fixture.data.exercises[0].id);
+    expect(fixture.data.routines).toEqual(routines);
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByRole('button', { name: 'Replace exercise' }).textContent).toContain(
+      'Synthetic cable press',
+    );
+    cleanup();
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Replace exercise' }));
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search replacement exercises' }), {
+      target: { value: 'Synthetic cable press' },
+    });
+    expect(
+      screen.getByRole('button', { name: 'Synthetic cable press Chest, triceps · Cable' }),
+    ).toBeTruthy();
+  });
+
+  it('keeps a failed creation open and cancels without changing training data', async () => {
+    await beginWorkout();
+    const before = structuredClone(fixture.data);
+    fireEvent.click(screen.getByRole('button', { name: 'Replace exercise' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create exercise' }));
+    for (const [name, value] of [
+      ['Exercise name', 'Synthetic lift'],
+      ['Equipment', 'Cable'],
+      ['Primary muscles', 'Chest'],
+      ['Instructions', 'Move with control.'],
+    ]) {
+      fireEvent.change(screen.getByRole('textbox', { name }), { target: { value } });
+    }
+    fixture.update.mockRejectedValueOnce(new Error('Synthetic storage failure'));
+    fireEvent.click(screen.getByRole('button', { name: 'Create and switch' }));
+    await screen.findByText('Could not save the exercise. Please try again.');
+    expect(fixture.data).toEqual(before);
+    expect(screen.getByRole('textbox', { name: 'Exercise name' })).toHaveProperty(
+      'value',
+      'Synthetic lift',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Back to library' }));
+    expect(screen.getByRole('searchbox', { name: 'Search replacement exercises' })).toBeTruthy();
+    expect(fixture.data).toEqual(before);
+  });
+
   it('saves exercise feedback during training and workout feedback after finish', async () => {
     await beginWorkout();
     expect(screen.queryByRole('group', { name: 'Workout difficulty' })).toBeNull();
@@ -72,11 +147,13 @@ describe('workout set table', () => {
     expect(fixture.data.workouts[0].exercises[0].repsInReserve).toBeUndefined();
     expect(fixture.data.workouts[0].exercises[0].feeling).toBe('hard');
     fireEvent.click(screen.getByRole('checkbox', { name: 'Set 1 done' }));
-    await screen.findByRole('button', { name: /Undo/ });
+    await waitFor(() =>
+      expect(fixture.data.workouts[0].exercises[0].actualSets[0].status).toBe('completed'),
+    );
     fireEvent.change(screen.getByRole('textbox', { name: /Exercise note/ }), {
       target: { value: 'Edited after set completion' },
     });
-    fireEvent.click(screen.getByRole('button', { name: /Undo/ }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Set 1 done' }));
     await waitFor(() =>
       expect(fixture.data.workouts[0].exercises[0].actualSets[0].status).toBe('incomplete'),
     );
@@ -430,7 +507,7 @@ describe('workout set table', () => {
     expect(within(table).getAllByRole('img', { name: /Personal record/ })).toHaveLength(1);
     expect(screen.queryByRole('region', { name: 'Personal records achieved' })).toBeNull();
   });
-  it('captures each serialized pre-change snapshot so Undo restores only the latest tap', async () => {
+  it('keeps completion reversible through checkboxes without showing Undo during training', async () => {
     await beginWorkout();
     fireEvent.click(screen.getByRole('checkbox', { name: 'Set 1 done' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Set 2 done' }));
@@ -438,13 +515,15 @@ describe('workout set table', () => {
       expect(fixture.data.workouts[0].exercises[0].actualSets[1].status).toBe('completed'),
     );
     expect(document.querySelector('.toast')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /Undo/ }));
+    expect(screen.queryByRole('button', { name: /Undo/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }));
+    await waitFor(() => expect(fixture.data.workouts[0].exercises[0].actualSets).toHaveLength(4));
+    expect(screen.queryByRole('button', { name: /Undo/ })).toBeNull();
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Set 2 done' }));
     await waitFor(() => {
       expect(fixture.data.workouts[0].exercises[0].actualSets[0].status).toBe('completed');
       expect(fixture.data.workouts[0].exercises[0].actualSets[1].status).toBe('incomplete');
-      expect(fixture.data.workouts[0].restSetId).toBe(
-        fixture.data.workouts[0].exercises[0].actualSets[0].id,
-      );
+      expect(fixture.data.workouts[0].restSetId).toBeUndefined();
     });
   });
 

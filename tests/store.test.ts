@@ -4,6 +4,8 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppData, SyncRequest } from '../shared/types';
 import {
   emptyData,
+  addCustomExercise,
+  replaceWorkoutExercise,
   createRoutine,
   createPrescription,
   startWorkout,
@@ -146,6 +148,41 @@ describe('durable local store synchronization', () => {
     await vi.waitFor(() => expect(useStore().syncStatus).toBe('conflict'));
     expect(useStore().data?.routines[0].name).toBe('Locally logged while pulling');
     expect(useStore().conflict?.data.routines[0].name).toBe('Other device');
+  });
+
+  it('persists a custom replacement offline, recovers it on reload, and syncs it', async () => {
+    const routine = {
+      ...createRoutine('Synthetic custom routine'),
+      exercises: [createPrescription(catalog[0].id)],
+    };
+    await useStore().update((data) => startWorkout({ ...data, routines: [routine] }, routine.id));
+    const workout = useStore().data!.workouts[0];
+    const exercise = {
+      ...catalog[0],
+      id: 'custom-synthetic',
+      name: 'Synthetic custom lift',
+      custom: true,
+    };
+    await useStore().update((data) =>
+      replaceWorkoutExercise(
+        addCustomExercise(data, exercise),
+        workout.id,
+        workout.exercises[0].id,
+        exercise.id,
+      ),
+    );
+    vi.resetModules();
+    events = new EventTarget();
+    vi.stubGlobal('window', events);
+    useStore = (await import('../src/lib/store')).useAppStore;
+    const recovered = JSON.parse(await useStore().exportData());
+    expect(recovered.exercises).toEqual([exercise]);
+    expect(recovered.workouts[0].exercises[0].exerciseId).toBe(exercise.id);
+    expect(recovered.routines[0]).toEqual(routine);
+    reconnect();
+    await waitForSync();
+    expect(remote.data.exercises).toEqual([exercise]);
+    expect(remote.data.workouts[0].exercises[0].exerciseId).toBe(exercise.id);
   });
 
   it('recovers local data and pending operations after an application reload', async () => {

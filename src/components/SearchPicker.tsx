@@ -32,6 +32,7 @@ export function SearchPicker({
   hideTrigger = false,
   triggerLabel,
   triggerIcon,
+  onCreate,
 }: {
   label: string;
   value: string;
@@ -47,6 +48,7 @@ export function SearchPicker({
   hideTrigger?: boolean;
   triggerLabel?: string;
   triggerIcon?: ReactNode;
+  onCreate?: (query: string) => void;
 }) {
   const [localOpen, setLocalOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -145,7 +147,22 @@ export function SearchPicker({
               </div>
             )}
           </div>
-          {footer && <div className="search-picker-footer">{footer}</div>}
+          {(footer || onCreate) && (
+            <div className="search-picker-footer">
+              {onCreate && (
+                <Button
+                  variant="secondary"
+                  onClick={() => {
+                    changeOpen(false);
+                    onCreate(query.trim());
+                  }}
+                >
+                  Create exercise
+                </Button>
+              )}
+              {footer}
+            </div>
+          )}
         </div>
       </Sheet>
     </>
