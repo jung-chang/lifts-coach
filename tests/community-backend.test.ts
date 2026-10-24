@@ -117,6 +117,12 @@ function finishedData() {
   const data = emptyData(),
     completedAt = new Date().toISOString(),
     startedAt = completedAt;
+  data.exerciseSettings = {
+    'ex_barbell-bench-press': {
+      persistentNote: 'synthetic persistent setting private',
+      updatedAt: completedAt,
+    },
+  };
   data.workouts = [
     {
       id: 'workout-1',
@@ -133,6 +139,7 @@ function finishedData() {
           exerciseId: 'ex_barbell-bench-press',
           name: 'Bench press',
           notes: 'synthetic private exercise note',
+          persistentNote: 'synthetic persistent instruction private',
           feeling: 'hard',
           repsInReserve: '0',
           sets: 3,
@@ -836,6 +843,7 @@ describe('community backend authorization and publication', () => {
     const data = finishedData(),
       exercise = data.workouts[0].exercises[0];
     exercise.loadMode = 'assistance';
+    data.exerciseSettings = {};
     exercise.actualSets[0].loadMode = 'assistance';
     exercise.actualSets.push({ ...exercise.actualSets[0], id: 'lower-assistance', weight: 50 });
     expect(
@@ -1034,6 +1042,8 @@ describe('community backend authorization and publication', () => {
     expect(page.items[0].exerciseNames).toEqual(['Bench press']);
     expect(JSON.stringify(page)).not.toContain('private note');
     expect(JSON.stringify(page)).not.toContain('synthetic private exercise note');
+    expect(JSON.stringify(page)).not.toContain('synthetic persistent instruction private');
+    expect(JSON.stringify(page)).not.toContain('synthetic persistent setting private');
     const sharedProfile = await call(db, member, `/api/community/profiles/${os.profile.publicId}`);
     const sharedProfileBody = (await sharedProfile.json()) as any;
     expect(sharedProfileBody.scope).toBe('shared-workouts');
@@ -1043,6 +1053,10 @@ describe('community backend authorization and publication', () => {
     expect(sharedProfileBody.workouts).toHaveLength(1);
     expect(JSON.stringify(sharedProfileBody)).not.toContain('private note');
     expect(JSON.stringify(sharedProfileBody)).not.toContain('synthetic private exercise note');
+    expect(JSON.stringify(sharedProfileBody)).not.toContain(
+      'synthetic persistent instruction private',
+    );
+    expect(JSON.stringify(sharedProfileBody)).not.toContain('synthetic persistent setting private');
     const profileHistory = await call(
       db,
       member,
@@ -1052,15 +1066,29 @@ describe('community backend authorization and publication', () => {
     const profileHistoryBody = await profileHistory.json();
     expect(JSON.stringify(profileHistoryBody)).not.toContain('private note');
     expect(JSON.stringify(profileHistoryBody)).not.toContain('synthetic private exercise note');
+    expect(JSON.stringify(profileHistoryBody)).not.toContain(
+      'synthetic persistent instruction private',
+    );
+    expect(JSON.stringify(profileHistoryBody)).not.toContain(
+      'synthetic persistent setting private',
+    );
     const ownerState = await call(db, owner, '/api/state');
     expect(ownerState.status).toBe(200);
     const ownData = ((await ownerState.json()) as any).data;
     expect(ownData.workouts[0].notes).toBe('private note');
     expect(ownData.workouts[0].exercises[0].notes).toBe('synthetic private exercise note');
+    expect(ownData.workouts[0].exercises[0].persistentNote).toBe(
+      'synthetic persistent instruction private',
+    );
+    expect(ownData.exerciseSettings['ex_barbell-bench-press'].persistentNote).toBe(
+      'synthetic persistent setting private',
+    );
     const memberState = await call(db, member, '/api/state');
     const memberData = await memberState.json();
     expect(JSON.stringify(memberData)).not.toContain('private note');
     expect(JSON.stringify(memberData)).not.toContain('synthetic private exercise note');
+    expect(JSON.stringify(memberData)).not.toContain('synthetic persistent instruction private');
+    expect(JSON.stringify(memberData)).not.toContain('synthetic persistent setting private');
     expect(
       db.db
         .prepare("SELECT visibility FROM workout_visibility WHERE workout_id='pre-consent-workout'")
@@ -1110,6 +1138,8 @@ describe('community backend authorization and publication', () => {
     expect(detail.exercises[0]).not.toHaveProperty('feeling');
     expect(detail.exercises[0]).not.toHaveProperty('repsInReserve');
     expect(JSON.stringify(detail)).not.toContain('synthetic private exercise note');
+    expect(JSON.stringify(detail)).not.toContain('synthetic persistent instruction private');
+    expect(JSON.stringify(detail)).not.toContain('synthetic persistent setting private');
     expect(JSON.stringify(detail)).not.toContain('owner@example.test');
     const privateDecision = await call(db, owner, '/api/me/workouts/workout-1/visibility', 'PUT', {
       visibility: 'private',

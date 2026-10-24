@@ -10,6 +10,7 @@ import {
   createPrescription,
   startWorkout,
   updateWorkoutFeedback,
+  updatePersistentExerciseNote,
   finishWorkout,
 } from '../shared/domain';
 import { catalog } from '../shared/catalog';
@@ -99,6 +100,64 @@ async function waitForSync() {
 }
 
 describe('durable local store synchronization', () => {
+  it('recovers persistent exercise notes offline and syncs them separately from workout feedback', async () => {
+    const exerciseId = catalog[0].id;
+    const routine = {
+      ...createRoutine('Synthetic noted routine'),
+      exercises: [createPrescription(exerciseId)],
+    };
+    await useStore().update((data) =>
+      startWorkout(
+        updatePersistentExerciseNote(
+          { ...data, routines: [routine] },
+          exerciseId,
+          'Last two sets: partial reps.',
+        ),
+        routine.id,
+      ),
+    );
+    const active = useStore().data!.workouts[0];
+    await useStore().update((data) =>
+      updateWorkoutFeedback(
+        data,
+        active.id,
+        { notes: 'Synthetic session feedback' },
+        active.exercises[0].id,
+      ),
+    );
+    vi.resetModules();
+    events = new EventTarget();
+    vi.stubGlobal('window', events);
+    useStore = (await import('../src/lib/store')).useAppStore;
+    const recovered = JSON.parse(await useStore().exportData());
+    expect(recovered.exerciseSettings[exerciseId].persistentNote).toBe(
+      'Last two sets: partial reps.',
+    );
+    expect(recovered.workouts[0].exercises[0].persistentNote).toBe('Last two sets: partial reps.');
+    expect(recovered.workouts[0].exercises[0].notes).toBe('Synthetic session feedback');
+    reconnect();
+    await waitForSync();
+    expect(remote.data.exerciseSettings?.[exerciseId].persistentNote).toBe(
+      'Last two sets: partial reps.',
+    );
+    expect(remote.data.workouts[0].exercises[0].notes).toBe('Synthetic session feedback');
+  });
+  it('loads the local account on first startup when no verified account is available', async () => {
+    currentAccount = '';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === '/api/session') return new Response(null, { status: 500 });
+        if (!init?.method) return Response.json({ data: emptyData(), revision: 0 });
+        return Response.json({ revision: 1 });
+      }),
+    );
+    await useStore().refreshSession();
+    await vi.waitFor(() => expect(useStore().data).not.toBeNull());
+    expect(useStore().identityStatus).toBe('unverified');
+    expect(useStore().data).toEqual(emptyData());
+  });
+
   it('saves locally while initial network discovery is stalled', async () => {
     connection.onLine = true;
     let release!: () => void;

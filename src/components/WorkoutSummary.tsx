@@ -67,6 +67,12 @@ export function WorkoutSummary({
           const e = workout.exercises.find((item) => item.id === id)!;
           return (
             <>
+              {e.persistentNote?.trim() && (
+                <div className="summary-exercise-feedback">
+                  <span className="small muted">Exercise instructions</span>
+                  <p className="small multiline">{e.persistentNote}</p>
+                </div>
+              )}
               {e.actualSets.some((s) => s.status !== 'completed') && (
                 <p className="muted small">
                   {e.actualSets.filter((s) => s.status !== 'completed').length} skipped or

@@ -187,6 +187,20 @@ async function readState(env: Env, accountId: string) {
     revision: row.revision,
   };
 }
+async function storedSchemaVersion(env: Env, accountId: string): Promise<number> {
+  const [metadata, contents] = await env.DB.batch([
+    env.DB.prepare('SELECT payload FROM account_state WHERE account_id = ?').bind(accountId),
+    env.DB.prepare(
+      'SELECT content FROM state_chunks WHERE account_id = ? ORDER BY chunk_index',
+    ).bind(accountId),
+  ]);
+  const payload = (contents.results as { content: string }[]).length
+    ? (contents.results as { content: string }[]).map((chunk) => chunk.content).join('')
+    : (metadata.results[0] as { payload: string } | undefined)?.payload;
+  if (!payload) return 0;
+  const parsed = JSON.parse(payload) as { schemaVersion?: unknown };
+  return typeof parsed.schemaVersion === 'number' ? parsed.schemaVersion : 0;
+}
 async function getSession(env: Env, accountId: string) {
   const row = await env.DB.prepare(
     `SELECT a.id accountId,a.email,a.coach_enabled coachEnabled,p.setup_completed_at setupCompletedAt,p.public_id publicId,p.display_name displayName,p.training_timezone trainingTimezone,s.summary_enabled summaryEnabled,s.auto_publish_workouts autoPublishWorkouts,s.policy_revision policyRevision,s.audience_acknowledged_at audienceAcknowledgedAt,s.workout_sharing_enabled_at enabledAt FROM accounts a JOIN profiles p ON p.account_id=a.id JOIN sharing_settings s ON s.account_id=a.id WHERE a.id=? AND a.status='active'`,
@@ -906,6 +920,7 @@ app.put('/api/state', async (c) => {
       accountId: z.string().optional(),
       restore: z.boolean().optional(),
       data: z.unknown(),
+      legacyData: z.unknown().optional(),
     })
     .parse(await c.req.json());
   const data = validateBackup(request.data);
@@ -947,14 +962,52 @@ app.put('/api/state', async (c) => {
       { error: 'Account identity changed. Refresh your session before synchronizing.' },
       409,
     );
-  await readState(c.env, accountId);
   const previous = await c.env.DB.prepare(
     'SELECT revision, fingerprint FROM sync_receipts WHERE account_id = ? AND operation_id = ?',
   )
     .bind(accountId, request.operationId)
     .first<{ revision: number; fingerprint: string }>();
-  if (previous)
-    if (previous.fingerprint === fingerprint) {
+  if (previous) {
+    let replayMatches = previous.fingerprint === fingerprint;
+    const rawLegacyData =
+      request.legacyData ??
+      (request.data &&
+      typeof request.data === 'object' &&
+      (request.data as { schemaVersion?: unknown }).schemaVersion === 1
+        ? request.data
+        : undefined);
+    let legacyPayloadMatches = false;
+    if (
+      rawLegacyData &&
+      typeof rawLegacyData === 'object' &&
+      (rawLegacyData as { schemaVersion?: unknown }).schemaVersion === 1
+    ) {
+      try {
+        legacyPayloadMatches =
+          JSON.stringify(validateBackup(rawLegacyData)) === JSON.stringify(data);
+      } catch {
+        /* invalid legacy payload cannot authenticate a receipt replay */
+      }
+    }
+    if (!replayMatches && rawLegacyData !== undefined && legacyPayloadMatches) {
+      const legacyDigest = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(
+          JSON.stringify({
+            data: rawLegacyData,
+            deviceId: request.deviceId,
+            baseRevision: request.baseRevision,
+            accountId: request.accountId,
+            restore: request.restore,
+          }),
+        ),
+      );
+      replayMatches =
+        [...new Uint8Array(legacyDigest)]
+          .map((byte) => byte.toString(16).padStart(2, '0'))
+          .join('') === previous.fingerprint;
+    }
+    if (replayMatches) {
       const current = await c.env.DB.prepare(
         'SELECT revision FROM account_state WHERE account_id=?',
       )
@@ -965,6 +1018,25 @@ app.put('/api/state', async (c) => {
       return c.json({ revision: previous.revision });
     } else
       return c.json({ error: 'An operation identifier was reused for different content.' }, 400);
+  }
+  const incomingVersion =
+    request.data && typeof request.data === 'object'
+      ? (request.data as { schemaVersion?: unknown }).schemaVersion
+      : undefined;
+  const currentVersion = await storedSchemaVersion(c.env, accountId);
+  if (currentVersion > 1 && incomingVersion === 1)
+    return c.json(
+      {
+        error:
+          'This account has newer training data. Upgrade this app before syncing so your pending changes are preserved.',
+        code: 'client_upgrade_required',
+        currentSchemaVersion: currentVersion,
+      },
+      426,
+    );
+  // Validate/migrate only after the raw persisted version guard, so a newer
+  // unsupported server schema produces a clear upgrade response without writes.
+  await readState(c.env, accountId);
   const now = new Date().toISOString();
   const chunks = splitState(JSON.stringify(data));
   await c.env.DB.batch([

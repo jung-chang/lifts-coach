@@ -5,7 +5,15 @@ import {
   id,
   proposalFingerprint,
 } from '../../shared/domain';
-import type { AppData, Exercise, Routine, TrainingEdit } from '../../shared/types';
+import type {
+  AppData,
+  Exercise,
+  ExerciseSettings,
+  Routine,
+  TrainingEdit,
+} from '../../shared/types';
+import { validateExerciseSettings } from '../../shared/exerciseNotes';
+import { catalog } from '../../shared/catalog';
 
 export interface RoutineDraft {
   routine: Routine;
@@ -15,13 +23,19 @@ export interface RoutineDraft {
   initialDraftFingerprint: string;
   proposalId?: string;
   customExercises: Exercise[];
+  exerciseSettings: Record<string, ExerciseSettings>;
+  sourceExerciseSettings: Record<string, string | null>;
 }
 
 export function routineFingerprint(routine: Routine | null): string {
   return JSON.stringify(routine);
 }
 
-export function createRoutineDraft(routine?: Routine, proposalId?: string): RoutineDraft {
+export function createRoutineDraft(
+  routine?: Routine,
+  proposalId?: string,
+  data?: AppData,
+): RoutineDraft {
   const source = routine ? structuredClone(routine) : null;
   const created = source ?? {
     id: id('routine'),
@@ -38,6 +52,23 @@ export function createRoutineDraft(routine?: Routine, proposalId?: string): Rout
     initialDraftFingerprint: routineFingerprint(created),
     proposalId,
     customExercises: [],
+    exerciseSettings: {},
+    sourceExerciseSettings: Object.fromEntries(
+      [
+        ...new Set(
+          [
+            ...catalog,
+            ...(data?.exercises ?? []),
+            ...(routine?.exercises ?? []).map((p) => ({ id: p.exerciseId })),
+          ]
+            .map((exercise) => exercise.id)
+            .concat(Object.keys(data?.exerciseSettings ?? {})),
+        ),
+      ].map((exerciseId) => [
+        exerciseId,
+        JSON.stringify(data?.exerciseSettings?.[exerciseId]) ?? null,
+      ]),
+    ),
   };
 }
 
@@ -78,6 +109,7 @@ export function hasRoutineDraftChanges(draft: RoutineDraft, name: string): boole
     normalized !== (draft.source?.name || draft.routine.name || '') ||
     routineFingerprint(draft.routine) !== draft.initialDraftFingerprint ||
     Object.keys(draft.increments).length > 0 ||
+    Object.keys(draft.exerciseSettings).length > 0 ||
     draft.customExercises.length > 0
   );
 }
@@ -92,6 +124,7 @@ export function commitRoutineDraft(data: AppData, draft: RoutineDraft, name: str
   const normalized = name.trim();
   if (!normalized) throw new Error('Give this routine a name.');
   if (!draft.routine.exercises.length) throw new Error('Add at least one exercise before saving.');
+  for (const settings of Object.values(draft.exerciseSettings)) validateExerciseSettings(settings);
   const next = structuredClone(data);
   const current = draft.source && next.routines.find((r) => r.id === draft.source!.id);
   if (draft.source && (!current || routineFingerprint(current) !== draft.sourceFingerprint)) {
@@ -111,7 +144,38 @@ export function commitRoutineDraft(data: AppData, draft: RoutineDraft, name: str
     next.routines.push(saved);
   }
   next.settings.increments = { ...next.settings.increments, ...draft.increments };
+  next.exerciseSettings = { ...next.exerciseSettings };
+  for (const [exerciseId, settings] of Object.entries(draft.exerciseSettings)) {
+    const source = draft.sourceExerciseSettings[exerciseId];
+    if (
+      source !== undefined &&
+      (JSON.stringify(data.exerciseSettings?.[exerciseId]) ?? null) !== source
+    ) {
+      throw new Error(
+        'Exercise settings changed while you were editing. Reopen the routine to review the latest version.',
+      );
+    }
+    next.exerciseSettings[exerciseId] = structuredClone(settings);
+  }
   return next;
+}
+
+export function stageExerciseSettings(
+  draft: RoutineDraft,
+  exerciseId: string,
+  settings: ExerciseSettings,
+  data: AppData,
+): RoutineDraft {
+  return {
+    ...draft,
+    exerciseSettings: { ...draft.exerciseSettings, [exerciseId]: structuredClone(settings) },
+    sourceExerciseSettings: {
+      ...draft.sourceExerciseSettings,
+      [exerciseId]: Object.prototype.hasOwnProperty.call(draft.sourceExerciseSettings, exerciseId)
+        ? draft.sourceExerciseSettings[exerciseId]
+        : (JSON.stringify(data.exerciseSettings?.[exerciseId]) ?? null),
+    },
+  };
 }
 
 export function applyInspectedRoutineProposal(
@@ -120,9 +184,12 @@ export function applyInspectedRoutineProposal(
   routine: Routine,
   customExercises: Exercise[],
   increments: Record<string, number>,
+  exerciseSettings: Record<string, ExerciseSettings> = {},
+  sourceExerciseSettings: Record<string, string | null> = {},
 ): AppData {
   const proposal = data.proposals.find((p) => p.id === proposalId && p.status === 'pending');
   if (!proposal?.routineDraft) throw new Error('This proposal is no longer available');
+  for (const settings of Object.values(exerciseSettings)) validateExerciseSettings(settings);
   if (proposal.targetFingerprint !== proposalFingerprint(data, proposal)) {
     throw new Error(
       'This proposal changed while you were editing. Reopen it to review the latest version.',
@@ -131,10 +198,25 @@ export function applyInspectedRoutineProposal(
   let next = structuredClone(data);
   for (const exercise of customExercises) next = addCustomExercise(next, exercise);
   next.settings.increments = { ...next.settings.increments, ...increments };
+  next.exerciseSettings = { ...next.exerciseSettings };
+  for (const [exerciseId, settings] of Object.entries(exerciseSettings)) {
+    const source = sourceExerciseSettings[exerciseId];
+    if (
+      source !== undefined &&
+      (JSON.stringify(data.exerciseSettings?.[exerciseId]) ?? null) !== source
+    )
+      throw new Error(
+        'Exercise settings changed while you were editing. Reopen the routine to review the latest version.',
+      );
+    next.exerciseSettings[exerciseId] = structuredClone(settings);
+  }
   // Editing the routine draft in the shared editor is the explicit reviewed
   // operation. Discard the proposal's parallel edit list so index zero cannot
   // accidentally apply an unrelated, uninspected operation.
   const updated = { ...proposal, routineDraft: structuredClone(routine), edits: [] };
+  // The original proposal and shared settings were checked above. Bind the
+  // reviewed draft to the settings saved in this same approved transaction.
+  updated.targetFingerprint = proposalFingerprint(next, updated);
   next.proposals = next.proposals.map((p) => (p.id === proposalId ? updated : p));
   return applyProposal(next, proposalId, [0]);
 }

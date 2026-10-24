@@ -14,6 +14,8 @@ import { Sheet } from './ui/Sheet';
 import { parseRepRange } from '../lib/repRange';
 import { loadModeLabel } from './LoadSemantics';
 import { SearchPicker } from './SearchPicker';
+import { stageExerciseSettings } from '../lib/routineDraft';
+import { validateExerciseSettings } from '../../shared/exerciseNotes';
 
 export function RoutineEditor({
   data,
@@ -104,6 +106,13 @@ export function RoutineEditor({
     });
     if (hasInvalidNumber) {
       setValidation('Use a valid value within the field limits before saving.');
+      return;
+    }
+    try {
+      for (const settings of Object.values(draft.exerciseSettings))
+        validateExerciseSettings(settings);
+    } catch (error) {
+      setValidation((error as Error).message);
       return;
     }
     const issue = validateRoutineDraft(draft, name);
@@ -355,6 +364,36 @@ export function RoutineEditor({
                       2000,
                     )}
                   </div>
+                  {ex && (
+                    <div className="form-field routine-exercise-note">
+                      <label htmlFor={`exercise-note-${p.id}`}>Exercise note</label>
+                      <textarea
+                        id={`exercise-note-${p.id}`}
+                        className="textarea"
+                        maxLength={2000}
+                        placeholder="e.g. Last 2 sets: half squats at 95%. Pause 3 seconds."
+                        value={
+                          (
+                            draft.exerciseSettings[p.exerciseId] ??
+                            data.exerciseSettings?.[p.exerciseId]
+                          )?.persistentNote ?? ''
+                        }
+                        onChange={(event) => {
+                          const existing = draft.exerciseSettings[p.exerciseId] ??
+                            data.exerciseSettings?.[p.exerciseId] ?? {
+                              updatedAt: new Date().toISOString(),
+                            };
+                          const settings = { ...existing, updatedAt: new Date().toISOString() };
+                          if (event.target.value) settings.persistentNote = event.target.value;
+                          else delete settings.persistentNote;
+                          setDraft(stageExerciseSettings(draft, p.exerciseId, settings, data));
+                        }}
+                      />
+                      <small>
+                        Applies to this exercise wherever it appears. Saved with this routine.
+                      </small>
+                    </div>
+                  )}
                   <details className="routine-options">
                     <summary>Options</summary>
                     <div className="routine-options-actions">

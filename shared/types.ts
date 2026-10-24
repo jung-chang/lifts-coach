@@ -1,5 +1,9 @@
 export type LoadMode = 'external' | 'per-dumbbell' | 'bodyweight' | 'assistance';
 export type Unit = 'lb' | 'kg';
+export interface ExerciseSettings {
+  persistentNote?: string;
+  updatedAt: string;
+}
 export interface Exercise {
   id: string;
   name: string;
@@ -42,6 +46,7 @@ export interface WorkoutExercise extends Prescription {
   notes?: string;
   feeling?: 'easy' | 'good' | 'hard';
   repsInReserve?: '3+' | '1-2' | '0';
+  persistentNote?: string;
 }
 export interface Workout {
   id: string;
@@ -129,7 +134,7 @@ export interface ChatMessage {
   createdAt: string;
 }
 export interface AppData {
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   catalogVersion: string;
   routines: Routine[];
   workouts: Workout[];
@@ -139,6 +144,7 @@ export interface AppData {
   settings: Settings;
   messages: ChatMessage[];
   appliedProposalIds: string[];
+  exerciseSettings?: Record<string, ExerciseSettings>;
 }
 export interface SyncRequest {
   accountId?: string;

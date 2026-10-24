@@ -44,6 +44,7 @@ import {
   updateWorkoutFeedback,
   previousExerciseNote,
   previousWorkoutNote,
+  updatePersistentExerciseNote,
 } from '../shared/domain';
 import { catalog } from '../shared/catalog';
 import { coachSelection } from '../shared/coachSelection';
@@ -66,6 +67,14 @@ import { Sheet } from './components/ui/Sheet';
 import { RoutineEditor } from './components/RoutineEditor';
 import { ProfileSetup } from './components/ProfileSetup';
 import { SetTable } from './components/SetTable';
+import { PersistentExerciseNote } from './components/PersistentExerciseNote';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from './components/ui/Tabs';
+import {
+  Accordion,
+  AccordionItem,
+  AccordionTrigger,
+  AccordionContent,
+} from './components/ui/Accordion';
 import { SearchPicker } from './components/SearchPicker';
 import { CreateExercise } from './components/CreateExercise';
 import { FirstRunOnboarding } from './components/FirstRunOnboarding';
@@ -410,7 +419,7 @@ function App() {
       setChatError('Save or discard your current draft before reviewing another routine.');
       return;
     }
-    const draft = createRoutineDraft(undefined, proposal.id);
+    const draft = createRoutineDraft(undefined, proposal.id, data ?? undefined);
     draft.routine = structuredClone(proposal.routineDraft);
     draft.initialDraftFingerprint = JSON.stringify(draft.routine);
     setEditorDraft(draft);
@@ -425,7 +434,7 @@ function App() {
       setChatError('Save or discard your current draft before opening another routine.');
       return;
     }
-    const draft = createRoutineDraft(r);
+    const draft = createRoutineDraft(r, undefined, data ?? undefined);
     setEditorDraft(draft);
     setEditorVisible(true);
     setEditorName(r?.name || '');
@@ -450,6 +459,8 @@ function App() {
             saved,
             editorDraft.customExercises,
             editorDraft.increments,
+            editorDraft.exerciseSettings,
+            editorDraft.sourceExerciseSettings,
           );
         }).then((ok) => {
           if (ok) {
@@ -1135,6 +1146,11 @@ function App() {
                   requestDiscard={() => setDiscardWorkoutRequested(workout!.id)}
                   say={say}
                   mutate={mutate}
+                  savePersistentNote={(exerciseId: string, note: string) =>
+                    safeUpdate((d) =>
+                      updatePersistentExerciseNote(d, exerciseId, note, workout!.id),
+                    )
+                  }
                   saveFeedback={(
                     feedback: {
                       notes?: string;
@@ -1833,6 +1849,7 @@ function WorkoutScreen({
   say,
   mutate,
   saveFeedback,
+  savePersistentNote,
 }: any) {
   const [replacementOpen, setReplacementOpen] = useState(false);
   const [customName, setCustomName] = useState<string | null>(null);
@@ -1858,6 +1875,7 @@ function WorkoutScreen({
         w.id === workout.id ? { ...w, restEndsAt: Date.now() + seconds * 1000 } : w,
       ),
     }));
+  const priorRoutineNote = previousWorkoutNote(data, workout.id);
   const priorExerciseNote = ex ? previousExerciseNote(data, workout.id, ex.id) : undefined;
   const saveExerciseFeedback = (feedback: {
     notes?: string;
@@ -1906,150 +1924,204 @@ function WorkoutScreen({
           }}
         />
       </div>
-      {ex ? (
-        <>
-          <div className="card card-pad workout-exercise-card" style={{ marginBottom: 14 }}>
-            <div className="row space-between">
-              <div>
-                <div className="eyebrow">
-                  Exercise {currentEx + 1} of {workout.exercises.length}
-                </div>
-                <SearchPicker
-                  key={ex.id}
-                  open={replacementOpen}
-                  onOpenChange={setReplacementOpen}
-                  onCreate={setCustomName}
-                  label="Replace exercise"
-                  searchLabel="Search replacement exercises"
-                  value={ex.exerciseId}
-                  triggerLabel={ex.name}
-                  triggerIcon={<ArrowLeftRight size={17} aria-hidden="true" />}
-                  options={allExercises(data)
-                    .filter((item) => item.id !== ex.exerciseId)
-                    .map((item) => ({
-                      value: item.id,
-                      label: item.name,
-                      description: `${item.muscles.join(', ')} · ${item.equipment}`,
-                    }))}
-                  description={`For today only.${ex.actualSets.some((set) => set.status === 'completed') ? ' Completed sets stay with the original exercise; the replacement is added next.' : ''}`}
-                  onChange={replaceToday}
-                  placeholder="Name, muscle, or equipment"
-                  emptyMessage="No exercises found."
-                />
-                <Sheet
-                  open={customName !== null}
-                  onOpenChange={(open) => !open && setCustomName(null)}
-                  title="Create exercise"
-                >
-                  {customName !== null && (
-                    <CreateExercise
-                      initialName={customName}
-                      onCancel={() => {
-                        setCustomName(null);
-                        setReplacementOpen(true);
-                      }}
-                      onSave={async (exercise) => {
-                        const saved = await mutate((current: AppData) =>
-                          replaceWorkoutExercise(
-                            addCustomExercise(current, exercise),
-                            workout.id,
-                            ex.id,
-                            exercise.id,
-                          ),
-                        );
-                        if (saved) {
-                          setCustomName(null);
-                          if (ex.actualSets.some((set) => set.status === 'completed')) {
-                            setCurrentEx(currentEx + 1);
-                          }
-                          say(`${exercise.name} saved and substituted for today`);
-                        }
-                        return !!saved;
-                      }}
-                    />
-                  )}
-                </Sheet>
-                <span className="muted small">
-                  {formatLoadValue(ex.loadMode, toDisplayWeight(ex.targetWeight, unit), unit)} ·{' '}
-                  target {ex.sets} × {ex.repRange[0]}–{ex.repRange[1]}
-                </span>
-              </div>
-            </div>
+      {priorRoutineNote && (
+        <section
+          className="card card-pad previous-routine-note"
+          aria-label="Previous routine notes"
+        >
+          <div className="row space-between">
+            <h2>Last workout’s routine notes</h2>
+            <time className="muted small" dateTime={priorRoutineNote.startedAt}>
+              {new Date(priorRoutineNote.startedAt).toLocaleDateString()}
+            </time>
           </div>
-          {workout.restEndsAt && (
-            <div className="rest-box" style={{ marginBottom: 10 }}>
-              <Clock3 size={19} />
-              <div className="grow rest-timer-context">
-                <div className="small">Rest</div>
-                <div className="timer">
-                  {Math.floor(restLeft / 60)}:{String(restLeft % 60).padStart(2, '0')}
-                </div>
-              </div>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => restChange(Math.max(0, restLeft) + 30)}
-              >
-                +30 sec
-              </Button>
-              <Button size="sm" variant="ghost" onClick={skipRest}>
-                <SkipForward size={15} />
-                Skip
-              </Button>
-            </div>
-          )}
-          <SetTable
-            exercise={ex}
-            unit={unit}
-            onEdit={(set, patch) => editSet(ex.id, set, patch)}
-            onDone={(setId, done, patch) => toggleDone(ex.id, setId, done, patch)}
-            onAdd={() =>
-              mutate(
-                (d: AppData) => addWorkoutSet(d, workout.id, ex.id, 'working'),
-                'Working set added',
-              )
-            }
-          />
-          <ExerciseFeedback
-            key={`${workout.id}:${ex.id}:${ex.exerciseId}`}
-            exercise={ex}
-            previousNote={priorExerciseNote}
-            onSave={saveExerciseFeedback}
-          />
-          <div className="row space-between mobile-workout-navigation">
-            <Button
-              variant="secondary"
-              onClick={() => setCurrentEx(Math.max(0, currentEx - 1))}
-              disabled={currentEx === 0}
-            >
-              <ArrowLeft size={16} />
-              Previous
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => setCurrentEx(Math.min(workout.exercises.length - 1, currentEx + 1))}
-              disabled={currentEx >= workout.exercises.length - 1}
-            >
-              Next <ArrowRight size={16} />
-            </Button>
-          </div>
-        </>
-      ) : (
-        <div className="empty-state">
-          <h2>No exercises in this session</h2>
-        </div>
+          <p className="multiline">{priorRoutineNote.notes}</p>
+        </section>
       )}
+      <Tabs
+        value={ex?.id}
+        onValueChange={(value) => {
+          const index = workout.exercises.findIndex((item: WorkoutExercise) => item.id === value);
+          if (index >= 0) setCurrentEx(index);
+        }}
+      >
+        <TabsList aria-label="Exercises">
+          {workout.exercises.map((item: WorkoutExercise, index: number) => (
+            <TabsTrigger key={item.id} value={item.id}>
+              <span className="exercise-tab-number" aria-hidden="true">
+                {index + 1}
+              </span>
+              {item.name}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+        {ex ? (
+          <TabsContent key={ex.id} value={ex.id}>
+            <div className="card card-pad workout-exercise-card" style={{ marginBottom: 14 }}>
+              <div className="row space-between">
+                <div>
+                  <div className="eyebrow">
+                    Exercise {currentEx + 1} of {workout.exercises.length}
+                  </div>
+                  <SearchPicker
+                    key={ex.id}
+                    open={replacementOpen}
+                    onOpenChange={setReplacementOpen}
+                    onCreate={setCustomName}
+                    label="Replace exercise"
+                    searchLabel="Search replacement exercises"
+                    value={ex.exerciseId}
+                    triggerLabel={ex.name}
+                    triggerIcon={<ArrowLeftRight size={17} aria-hidden="true" />}
+                    options={allExercises(data)
+                      .filter((item) => item.id !== ex.exerciseId)
+                      .map((item) => ({
+                        value: item.id,
+                        label: item.name,
+                        description: `${item.muscles.join(', ')} · ${item.equipment}`,
+                      }))}
+                    description={`For today only.${ex.actualSets.some((set) => set.status === 'completed') ? ' Completed sets stay with the original exercise; the replacement is added next.' : ''}`}
+                    onChange={replaceToday}
+                    placeholder="Name, muscle, or equipment"
+                    emptyMessage="No exercises found."
+                  />
+                  <Sheet
+                    open={customName !== null}
+                    onOpenChange={(open) => !open && setCustomName(null)}
+                    title="Create exercise"
+                  >
+                    {customName !== null && (
+                      <CreateExercise
+                        initialName={customName}
+                        onCancel={() => {
+                          setCustomName(null);
+                          setReplacementOpen(true);
+                        }}
+                        onSave={async (exercise) => {
+                          const saved = await mutate((current: AppData) =>
+                            replaceWorkoutExercise(
+                              addCustomExercise(current, exercise),
+                              workout.id,
+                              ex.id,
+                              exercise.id,
+                            ),
+                          );
+                          if (saved) {
+                            setCustomName(null);
+                            if (ex.actualSets.some((set) => set.status === 'completed')) {
+                              setCurrentEx(currentEx + 1);
+                            }
+                            say(`${exercise.name} saved and substituted for today`);
+                          }
+                          return !!saved;
+                        }}
+                      />
+                    )}
+                  </Sheet>
+                  <span className="muted small">
+                    {formatLoadValue(ex.loadMode, toDisplayWeight(ex.targetWeight, unit), unit)} ·{' '}
+                    target {ex.sets} × {ex.repRange[0]}–{ex.repRange[1]}
+                  </span>
+                </div>
+              </div>
+              {workout.restEndsAt && (
+                <div className="rest-box" style={{ marginBottom: 10 }}>
+                  <Clock3 size={19} />
+                  <div className="grow rest-timer-context">
+                    <div className="small">Rest</div>
+                    <div className="timer">
+                      {Math.floor(restLeft / 60)}:{String(restLeft % 60).padStart(2, '0')}
+                    </div>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => restChange(Math.max(0, restLeft) + 30)}
+                  >
+                    +30 sec
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={skipRest}>
+                    <SkipForward size={15} />
+                    Skip
+                  </Button>
+                </div>
+              )}
+              <PersistentExerciseNote
+                key={`${workout.id}:${ex.id}:instructions`}
+                name={ex.name}
+                snapshotNote={ex.persistentNote}
+                personalNote={data.exerciseSettings?.[ex.exerciseId]?.persistentNote}
+                onSave={(note) => savePersistentNote(ex.exerciseId, note)}
+              />
+              <SetTable
+                exercise={ex}
+                unit={unit}
+                onEdit={(set, patch) => editSet(ex.id, set, patch)}
+                onDone={(setId, done, patch) => toggleDone(ex.id, setId, done, patch)}
+                onAdd={() =>
+                  mutate(
+                    (d: AppData) => addWorkoutSet(d, workout.id, ex.id, 'working'),
+                    'Working set added',
+                  )
+                }
+              />
+              <ExerciseFeedback
+                key={`${workout.id}:${ex.id}:${ex.exerciseId}`}
+                exercise={ex}
+                onSave={saveExerciseFeedback}
+              />
+            </div>
+            {priorExerciseNote && (
+              <Accordion
+                key={ex.id}
+                type="single"
+                collapsible
+                className="card card-pad previous-exercise-accordion"
+              >
+                <AccordionItem value="previous">
+                  <AccordionTrigger>Last workout’s exercise note</AccordionTrigger>
+                  <AccordionContent>
+                    <time className="muted small" dateTime={priorExerciseNote.startedAt}>
+                      {new Date(priorExerciseNote.startedAt).toLocaleDateString()}
+                    </time>
+                    <p className="multiline">{priorExerciseNote.notes}</p>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+            )}
+            <div className="row space-between mobile-workout-navigation">
+              <Button
+                variant="secondary"
+                onClick={() => setCurrentEx(Math.max(0, currentEx - 1))}
+                disabled={currentEx === 0}
+              >
+                <ArrowLeft size={16} />
+                Previous
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => setCurrentEx(Math.min(workout.exercises.length - 1, currentEx + 1))}
+                disabled={currentEx >= workout.exercises.length - 1}
+              >
+                Next <ArrowRight size={16} />
+              </Button>
+            </div>
+          </TabsContent>
+        ) : (
+          <div className="empty-state">
+            <h2>No exercises in this session</h2>
+          </div>
+        )}
+      </Tabs>
     </div>
   );
 }
 
 function ExerciseFeedback({
   exercise,
-  previousNote,
   onSave,
 }: {
   exercise: WorkoutExercise;
-  previousNote?: { notes: string; startedAt: string };
   onSave: (feedback: {
     notes?: string;
     feeling?: string;
@@ -2059,7 +2131,7 @@ function ExerciseFeedback({
   const [notes, setNotes] = useState(exercise.notes ?? '');
   const [feeling, setFeeling] = useState(exercise.feeling ?? '');
   return (
-    <section className="card card-pad workout-feedback" aria-label={`${exercise.name} feedback`}>
+    <section className="workout-feedback" aria-label={`${exercise.name} feedback`}>
       <details className="exercise-notes">
         <summary aria-label="Notes (optional)">
           <span>
@@ -2100,11 +2172,6 @@ function ExerciseFeedback({
           </label>
         </div>
       </details>
-      {previousNote?.notes && (
-        <p className="muted small previous-exercise-note">
-          Last time · {new Date(previousNote.startedAt).toLocaleDateString()} — {previousNote.notes}
-        </p>
-      )}
     </section>
   );
 }

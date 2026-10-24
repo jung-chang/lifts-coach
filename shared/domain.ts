@@ -12,6 +12,7 @@ import type {
 } from './types';
 import { catalog, catalogVersion } from './catalog';
 import { trainingDateAt } from './trainingDates';
+import { validateExerciseSettings } from './exerciseNotes';
 
 export { catalog, catalogVersion } from './catalog';
 export const id = (prefix = 'id') =>
@@ -25,7 +26,7 @@ function assert(ok: unknown, message: string): asserts ok {
 
 export function emptyData(): AppData {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     catalogVersion,
     routines: [],
     workouts: [],
@@ -49,6 +50,7 @@ export function emptyData(): AppData {
     },
     messages: [],
     appliedProposalIds: [],
+    exerciseSettings: {},
   };
 }
 export function createRoutine(name = 'New routine', position = 0): Routine {
@@ -234,6 +236,7 @@ function makeWorkout(
         (snapshot.loadMode !== p.loadMode || snapshot.targetWeight !== p.targetWeight);
       return {
         ...clone(p),
+        persistentNote: data.exerciseSettings?.[p.exerciseId]?.persistentNote,
         name: names.get(p.exerciseId) || exerciseFor(data, p.exerciseId)?.name || p.exerciseId,
         actualSets: Array.from({ length: p.sets }, (_, i) => ({
           id: id('set'),
@@ -891,6 +894,7 @@ export function editWorkout(data: AppData, workoutId: string, edits: TrainingEdi
           targetWeight: 0,
           restSeconds: old.restSeconds,
           name: replacement.name,
+          persistentNote: data.exerciseSettings?.[replacement.id]?.persistentNote,
           actualSets: Array.from({ length: count }, () => ({
             id: id('set'),
             weight: 0,
@@ -913,6 +917,7 @@ export function editWorkout(data: AppData, workoutId: string, edits: TrainingEdi
           targetWeight: 0,
           restSeconds: old.restSeconds,
           name: replacement.name,
+          persistentNote: data.exerciseSettings?.[replacement.id]?.persistentNote,
           actualSets: Array.from({ length: count }, () => ({
             id: id('set'),
             weight: 0,
@@ -941,6 +946,7 @@ export function editWorkout(data: AppData, workoutId: string, edits: TrainingEdi
       const fresh: WorkoutExercise = {
         ...added,
         name: exercise.name,
+        persistentNote: data.exerciseSettings?.[exercise.id]?.persistentNote,
         actualSets: Array.from({ length: added.sets }, () => ({
           id: id('set'),
           weight: added.targetWeight,
@@ -1116,7 +1122,7 @@ export function validateBackup(input: unknown): AppData {
   };
   if (!record(input)) return fail('expected object');
   const d = input as unknown as AppData;
-  if (d.schemaVersion !== 1) return fail('unsupported schema version');
+  if (d.schemaVersion !== 1 && d.schemaVersion !== 2) return fail('unsupported schema version');
   if (d.catalogVersion !== catalogVersion) return fail('unsupported exercise catalog version');
   for (const k of [
     'routines',
@@ -1294,6 +1300,11 @@ export function validateBackup(input: unknown): AppData {
         !modes.includes(e.loadMode)
       )
         fail('invalid workout exercise');
+      if (
+        e.persistentNote !== undefined &&
+        (typeof e.persistentNote !== 'string' || e.persistentNote.length > 2000)
+      )
+        fail('invalid persistent exercise note');
       try {
         validatePrescription(e);
       } catch (err) {
@@ -1389,5 +1400,58 @@ export function validateBackup(input: unknown): AppData {
       Number.isNaN(Date.parse(m.createdAt))
     )
       fail('invalid message');
-  return clone(d);
+  if (d.exerciseSettings !== undefined && !record(d.exerciseSettings))
+    fail('invalid exercise settings');
+  for (const [exerciseId, settings] of Object.entries(d.exerciseSettings ?? {})) {
+    if (!exIds.has(exerciseId)) fail('exercise settings reference an unknown exercise');
+    try {
+      validateExerciseSettings(settings as any);
+    } catch (error) {
+      return fail((error as Error).message);
+    }
+  }
+  const migrated = clone(d);
+  migrated.schemaVersion = 2;
+  migrated.exerciseSettings ??= {};
+  return migrated;
+}
+
+export function updatePersistentExerciseNote(
+  data: AppData,
+  exerciseId: string,
+  note: string,
+  workoutId?: string,
+): AppData {
+  assert(
+    typeof note === 'string' && note.length <= 2000,
+    'Exercise note must be 2000 characters or fewer',
+  );
+  assert(!!exerciseFor(data, exerciseId), 'Unknown exercise');
+  const stamp = now();
+  const existing = data.exerciseSettings?.[exerciseId] ?? { updatedAt: stamp };
+  const next: AppData = {
+    ...data,
+    exerciseSettings: {
+      ...(data.exerciseSettings ?? {}),
+      [exerciseId]: { ...existing, persistentNote: note, updatedAt: stamp },
+    },
+  };
+  if (workoutId) {
+    assert(
+      next.workouts.some((item) => item.id === workoutId && item.status === 'active'),
+      'Active workout not found',
+    );
+    next.workouts = next.workouts.map((item) =>
+      item.id !== workoutId
+        ? item
+        : {
+            ...item,
+            updatedAt: stamp,
+            exercises: item.exercises.map((entry) =>
+              entry.exerciseId === exerciseId ? { ...entry, persistentNote: note } : entry,
+            ),
+          },
+    );
+  }
+  return next;
 }

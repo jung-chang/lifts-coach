@@ -52,6 +52,33 @@ async function beginWorkout() {
 }
 
 describe('workout set table', () => {
+  it('shows persistent instructions and edits them separately from session feedback', async () => {
+    const exerciseId = fixture.data.routines[0].exercises[0].exerciseId;
+    fixture.data.exerciseSettings = {
+      [exerciseId]: {
+        persistentNote: 'Synthetic instructions: last two sets at 85%; pause 3 seconds.',
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    await beginWorkout();
+    expect(
+      screen.getByText('Synthetic instructions: last two sets at 85%; pause 3 seconds.'),
+    ).toBeTruthy();
+    expect(
+      fixture.data.workouts[0].exercises[0].actualSets.map((set: { weight: number }) => set.weight),
+    ).toEqual([45, 45, 45]);
+    fireEvent.click(screen.getByRole('button', { name: 'Edit exercise instructions' }));
+    fireEvent.change(screen.getByRole('textbox', { name: /Exercise instructions for/ }), {
+      target: { value: 'Updated synthetic instructions' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Save instructions' }));
+    await waitFor(() =>
+      expect(fixture.data.exerciseSettings[exerciseId].persistentNote).toBe(
+        'Updated synthetic instructions',
+      ),
+    );
+    expect(fixture.data.workouts[0].exercises[0].notes).toBeUndefined();
+  });
   it('creates a missing replacement, preserves completed sets, and keeps it after reopening', async () => {
     await beginWorkout();
     const routines = structuredClone(fixture.data.routines);
@@ -187,8 +214,19 @@ describe('workout set table', () => {
     previous.exercises[0].actualSets[0].status = 'completed';
     fixture.data = startWorkoutDomain(started, fixture.data.routines[0].id);
     const view = render(<App />);
-    expect(screen.getByText(/Last time.*Synthetic prior exercise note/)).toBeTruthy();
-    expect(screen.queryByText(/Last workout.*Synthetic prior workout note/)).toBeNull();
+    const historyToggle = screen.getByRole('button', { name: 'Last workout’s exercise note' });
+    expect(historyToggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('Synthetic prior exercise note')).toBeNull();
+    fireEvent.click(historyToggle);
+    expect(screen.getByText('Synthetic prior exercise note')).toBeTruthy();
+    expect(historyToggle.closest('.workout-exercise-card')).toBeNull();
+    expect(screen.getByText('Synthetic prior workout note')).toBeTruthy();
+    expect(
+      screen
+        .getByRole('region', { name: 'Previous routine notes' })
+        .compareDocumentPosition(screen.getByRole('tablist', { name: 'Exercises' })) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Notes (optional)'));
     expect(screen.getByRole('textbox', { name: /Exercise note/ })).toHaveProperty('value', '');
     expect(screen.queryByRole('textbox', { name: /Workout note/ })).toBeNull();

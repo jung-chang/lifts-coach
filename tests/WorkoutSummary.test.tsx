@@ -15,6 +15,7 @@ it('shows completed performance in the recorded timezone and preserves owner act
     ...createPrescription(catalog[0].id),
     name: 'Synthetic dumbbell press',
     notes: 'Synthetic private exercise note',
+    persistentNote: 'Synthetic saved instructions: last two sets use partial reps.',
     actualSets: [
       {
         id: 'warmup',
@@ -94,6 +95,8 @@ it('shows completed performance in the recorded timezone and preserves owner act
   expect(screen.getByRole('heading', { level: 2, name: exercise.name })).toBeTruthy();
   expect(screen.getByText(/2 skipped or incomplete sets/)).toBeTruthy();
   expect(screen.getByText(exercise.notes)).toBeTruthy();
+  expect(screen.getByText(exercise.persistentNote)).toBeTruthy();
+  expect(screen.getByText('Exercise instructions')).toBeTruthy();
   expect(screen.getByText(workout.notes!)).toBeTruthy();
   const finishTime = document.querySelector('time')!;
   expect(finishTime.getAttribute('datetime')).toBe(updatedAt);

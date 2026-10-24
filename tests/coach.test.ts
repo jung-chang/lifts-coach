@@ -93,13 +93,36 @@ describe('Coach provider integration', () => {
       { notes: 'private active exercise note', repsInReserve: '0' },
       active.exercises[0].id,
     );
+    const relevantExerciseId = catalog[0].id;
+    data.exerciseSettings = {
+      [relevantExerciseId]: {
+        persistentNote: 'private persistent settings note',
+        updatedAt: new Date().toISOString(),
+      },
+      unrelated: {
+        persistentNote: 'private unrelated settings note',
+        updatedAt: new Date().toISOString(),
+      },
+    };
+    for (const workout of data.workouts) {
+      workout.exercises[0].persistentNote = 'private snapshot instruction';
+    }
+    (data.routines[0].exercises[0] as any).privateNestedDraft = {
+      persistentNote: 'private nested routine note',
+    };
     const before = structuredClone(data);
     await coachReply(env, data, request);
     const sent = JSON.stringify(captured().input);
-    for (const note of [prior, active].flatMap((w) => {
-      const saved = data.workouts.find((item) => item.id === w.id)!;
-      return [saved.notes!, saved.exercises[0].notes!];
-    }))
+    for (const note of [
+      'private persistent settings note',
+      'private unrelated settings note',
+      'private snapshot instruction',
+      'private nested routine note',
+      ...[prior, active].flatMap((w) => {
+        const saved = data.workouts.find((item) => item.id === w.id)!;
+        return [saved.notes!, saved.exercises[0].notes!];
+      }),
+    ])
       expect(sent).not.toContain(note);
     expect(sent).toContain('Synthetic privacy routine');
     expect(sent).toContain(catalog[0].id);
@@ -142,7 +165,13 @@ describe('Coach provider integration', () => {
     mockOpenAI({
       text: 'Here is a plan for review.',
       evidenceIds: [],
-      proposals: [{ ...proposal, targetId: routine.id, routineDraft: routine }],
+      proposals: [
+        {
+          ...proposal,
+          targetId: routine.id,
+          routineDraft: routine,
+        },
+      ],
     });
     const result = await coachReply(env, data, request);
     expect(data.routines).toEqual([]);

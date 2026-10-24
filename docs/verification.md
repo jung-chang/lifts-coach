@@ -1,5 +1,13 @@
 # Prototype verification
 
+## Persistent exercise instructions (October 23, 2026)
+
+The owner selected a simpler notes-only feature. Percentage calculations, reference maxima, rounding controls and grouped prescriptions were removed. The existing routine prescription and workout logging controls remain in place. The protected specification stays unchanged.
+
+Notes coverage includes staged saves and concurrent changes, private instruction snapshots, repeat/replacement behavior, backup migration, retained queued operation identities and legacy receipt replay, old-writer rejection and private-note filtering from public responses and automatic Coach context.
+
+The notes-only revision passed all 256 tests in 40 files, the production build and public-source pattern checks with Node 24.13.1 and pnpm 10.33.0. Synthetic browser checks at 320 × 720 and 1440 × 1000 verified the original prescription controls, visible note field, saving, clearing/reopening, and instructions above the workout table; no horizontal document overflow was observed. Notes survived reopening and workout reload. The protected specification retained SHA256 `4129a87c82fbc08aa6cb16e27571dd94baf9378c1eb95eb99b66f407b63d1084`. Local synthetic checks do not establish a production deployment, live model call or real-device installation.
+
 The original **Lifts Coach** prototype was verified on October 13, 2026 with the specification's Electric Minimal design. The owner subsequently requested a Maia/Olive/Yellow redesign; this visual override is recorded in [the design system](design-system.md), while the protected specification remains unchanged.
 
 ## Automated checks observed
@@ -59,3 +67,9 @@ The owner's `lifts-coach` D1 database was created and schema migrations were app
 The prototype synchronizes full documents with an explicit 20 MB request cap. Larger data stays local and requires a storage/sync upgrade; it is not silently truncated. The exercise catalog contains 150 versioned entries. The 20 research records are conservative original summaries, mostly reviewed at abstract level, with that limitation recorded in the corpus.
 
 The protected spec's SHA256 remains `4129A87C82FBC08AA6CB16E27571DD94BAF9378C1EB95EB99B66F407B63D1084`.
+
+## Approved notes layout (October 24, 2026)
+
+The real app now matches the approved study: routine feedback above accessible exercise tabs, instructions editable inline with a pencil-only control, and prior exercise feedback in a separate accordion collapsed by default. Synthetic browser checks covered desktop, 390px and 320px layouts, tab keyboard navigation, saved instructions after reload, matching-routine context, completion feedback and repeat snapshots. At 320px document width remained 320px; the tab strip scrolls independently.
+
+With Node 24.13.1 and pnpm 10.33.0, all 257 tests in 40 files passed, as did the production build and public-source scan. Added compatibility coverage verifies non-empty v1 state stored across chunks, receipt replay without state changes, a v2 transition and rejection of stale v1 writes. These local checks do not establish production synchronization or live-provider behavior.

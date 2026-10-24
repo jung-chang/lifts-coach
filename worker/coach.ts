@@ -188,6 +188,19 @@ export function retrieveEvidence(message: string): Evidence[] {
     .map((item) => item.record);
 }
 
+/** Remove private exercise annotations from any nested snapshot/draft sent to the provider. */
+export function sanitizeCoachValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizeCoachValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => key !== 'persistentNote')
+        .map(([key, child]) => [key, sanitizeCoachValue(child)]),
+    );
+  }
+  return value;
+}
+
 export class CoachError extends Error {
   constructor(
     message: string,
@@ -271,6 +284,11 @@ async function generateCoachReply(
     ...workout,
     exercises: workout.exercises.map(({ notes: _exerciseNotes, ...exercise }) => exercise),
   }));
+  const safeRoutines = sanitizeCoachValue(data.routines);
+  const safeWorkouts = sanitizeCoachValue(workouts) as typeof workouts;
+  const focusedWorkout = request.context?.workoutId
+    ? safeWorkouts.find((workout) => workout.id === request.context?.workoutId)
+    : safeWorkouts.find((workout) => workout.status === 'active');
   const response = await generateText({
     model,
     output: Output.object({ schema: coachOutput }),
@@ -285,9 +303,9 @@ async function generateCoachReply(
       request,
       context: {
         profile: data.settings.profile,
-        routines: data.routines,
-        activeWorkout: workouts.find((w) => w.status === 'active'),
-        recentHistory: workouts.filter((w) => w.status === 'finished').slice(-12),
+        routines: safeRoutines,
+        activeWorkout: focusedWorkout,
+        recentHistory: safeWorkouts.filter((w) => w.status === 'finished').slice(-12),
         exercises: [...catalog, ...data.exercises].map(
           ({ id, name, equipment, loadMode, region }) => ({
             id,

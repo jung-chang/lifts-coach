@@ -447,3 +447,131 @@
     padding: 12px 3px;
   }
 }
+.persistent-exercise-note {
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
+.persistent-exercise-note p {
+  margin: 0 0 12px;
+}
+/* Workout instructions and history follow the approved notes study. */
+.exercise-tabs {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  margin: 20px 0 16px;
+  padding-bottom: 1px;
+}
+.exercise-tab {
+  position: relative;
+  flex: 0 0 auto;
+  max-width: 220px;
+  min-height: 48px;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--sub);
+  font: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.exercise-tab[data-state='active'] {
+  border-bottom-color: var(--olive);
+  color: var(--text);
+}
+.exercise-tab-number {
+  margin-right: 8px;
+  color: var(--sub);
+  font-size: 11px;
+}
+.exercise-tab:focus-visible,
+.note-accordion-trigger:focus-visible {
+  outline: 2px solid var(--olive);
+  outline-offset: -2px;
+}
+.previous-routine-note {
+  margin-top: 20px;
+}
+.previous-routine-note h2 {
+  font-size: 14px;
+  font-weight: 500;
+  margin: 0;
+}
+.previous-routine-note p {
+  margin: 12px 0 0;
+}
+.workout-exercise-card .persistent-exercise-note {
+  padding: 12px 0 20px;
+  border-bottom: 1px solid var(--border);
+}
+.workout-exercise-card .workout-table-card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.workout-exercise-card .workout-feedback {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+.previous-exercise-accordion {
+  margin: 0 0 14px;
+}
+.note-accordion-heading {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 400;
+}
+.note-accordion-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--sub);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.note-accordion-trigger[data-state='open'] > svg {
+  transform: rotate(180deg);
+}
+.note-accordion-content {
+  overflow: hidden;
+  padding-top: 12px;
+}
+.note-accordion-content p {
+  margin: 8px 0 0;
+}
+@media (max-width: 600px) {
+  .exercise-tab {
+    max-width: 180px;
+  }
+  .exercise-tab-number {
+    display: none;
+  }
+  .previous-routine-note .row {
+    align-items: flex-start;
+  }
+  .previous-routine-note time {
+    white-space: nowrap;
+  }
+  .workout-exercise-card .workout-table-card {
+    padding: 0;
+  }
+}
+.exercise-tabs {
+  scrollbar-width: none;
+}
+.exercise-tabs::-webkit-scrollbar {
+  display: none;
+}

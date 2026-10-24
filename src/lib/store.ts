@@ -10,10 +10,24 @@ type OutboxItem = {
   deviceId: string;
   baseRevision: number;
   data: AppData;
+  /** Original v1 shape retained only to recognize receipts created by older Workers. */
+  legacyData?: unknown;
   createdAt: string;
   accountId: string | null;
   restore?: boolean;
 };
+export function migrateQueuedItem(item: OutboxItem): OutboxItem {
+  const legacyData =
+    item.legacyData ??
+    ((item.data as { schemaVersion?: number }).schemaVersion === 1
+      ? structuredClone(item.data)
+      : undefined);
+  return {
+    ...item,
+    data: validateBackup(item.data),
+    ...(legacyData ? { legacyData } : {}),
+  };
+}
 class LocalDb extends Dexie {
   records!: Table<{ key: string; data: AppData }, string>;
   meta!: Table<Meta, string>;
@@ -165,27 +179,45 @@ async function activateAccount(session: AccountSession | null, identityStatus: I
           }
         })()
       : null);
-  if (requestedAccount !== next) {
+  if (requestedAccount !== next || !snapshot.data) {
     generation++;
     requestedAccount = next;
     syncPromise = undefined;
     serverAvailable = false;
     const turn = generation;
-    const [local, pending, synced, legacy] = await Promise.all([
+    const [local, queuedItems, synced, legacy] = await Promise.all([
       db.records.get(recordKey(next)),
-      db.outbox.filter((item) => item.accountId === next).count(),
+      db.outbox.filter((item) => item.accountId === next).toArray(),
       db.meta.get(metaKey(next, 'lastSyncedAt')),
       db.records.get('app-data'),
     ]);
     if (!isCurrent(next, turn)) return;
     const lastSyncedAt = typeof synced?.value === 'string' ? synced.value : null;
+    // Migrate local records and queued payloads in place. Keep operation IDs and
+    // revision reservations so a reload cannot duplicate or reorder pending work.
+    const migratedLocal = local ? validateBackup(local.data) : emptyData();
+    let migrationError = false;
+    const migratedQueue = queuedItems.map((item) => {
+      try {
+        return migrateQueuedItem(item);
+      } catch {
+        migrationError = true;
+        return item;
+      }
+    });
+    if (!migrationError && (local || queuedItems.length)) {
+      await db.transaction('rw', db.records, db.outbox, async () => {
+        if (local) await db.records.put({ key: recordKey(next), data: migratedLocal });
+        for (const item of migratedQueue) await db.outbox.put(item);
+      });
+    }
     publish({
       session,
       identityStatus,
-      data: local ? validateBackup(local.data) : emptyData(),
-      syncStatus: identityStatus === 'offline' ? 'offline' : 'local',
+      data: migratedLocal,
+      syncStatus: migrationError ? 'error' : identityStatus === 'offline' ? 'offline' : 'local',
       conflict: null,
-      pendingCount: pending,
+      pendingCount: queuedItems.length,
       lastSyncedAt,
       legacyAvailable: Boolean(legacy),
     });
@@ -227,11 +259,15 @@ async function sendOutbox(): Promise<void> {
           if (beforeWrite.session && navigator.onLine) void connectRemote();
           return;
         }
+        const safeItem = { ...item, data: validateBackup(item.data) };
+        if (JSON.stringify(safeItem.data) !== JSON.stringify(item.data))
+          await db.outbox.put(safeItem);
         const body = {
           operationId: item.operationId,
           deviceId: item.deviceId,
           baseRevision: item.baseRevision,
-          data: item.data,
+          data: safeItem.data,
+          ...(safeItem.legacyData ? { legacyData: safeItem.legacyData } : {}),
           accountId,
           ...(item.restore ? { restore: true } : {}),
         } as SyncRequest;

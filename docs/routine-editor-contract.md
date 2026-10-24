@@ -2,6 +2,16 @@
 
 This user-approved UX update keeps the protected product specification unchanged. Routine creation/editing is a full-page Train sub-screen at all widths. Contextual controls use mobile sheets.
 
+## Persistent exercise instructions
+
+Each exercise has an optional personal **Exercise note**, keyed by stable exercise identity across routines. This is separate from session feedback. The routine editor stages personal notes alongside its routine draft, saving them atomically on **Save routine**. Source fingerprints detect concurrent changes to shared exercise notes. A workout snapshots its instructions; the explicit training pencil-only instruction editor updates the personal note and matching active occurrences, preserving finished history. Notes stay out of Community responses and automatic Coach context.
+
+Keep the existing Sets / Reps / Target weight row and always show the optional exercise-note field underneath. Instructions can describe load percentages, tempo or partial reps as free text. There are no percentage calculations, reference-max controls or grouped-set prescriptions. Existing workout prefill, progression and logging behavior remains unchanged.
+
+Repeat preserves captured instructions and clears session feedback. Replacing an exercise uses its own saved note. Deleting a routine preserves shared exercise notes and historical snapshots.
+
+Data schema 2 adds personal exercise notes; version-1 backups and local/queued documents migrate without converting feedback to personal notes. Queued operation identities/revisions survive migration, with original content retained for acknowledgement retries. Older writers cannot overwrite schema-2 cloud data. Coach uses its existing editing operations and explicit approvals.
+
 ## Current refinement contract
 
 The owner's newest workout instruction replaces the focused-set overview with an always-visible table for the current exercise. Its four primary columns are Set, Load, Reps and Done, and fit 320px without horizontal panning. Load/reps remain editable per row; Done is a single-click checkbox with a 44px hit area. There is no set-status dropdown, hide/show table control, Complete Set action or fixed completion bar. Finish workout is clearly labeled at the top only. Exercise navigation remains available; warm-up/add/skip/load-mode capabilities move into Options.
