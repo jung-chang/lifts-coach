@@ -27,6 +27,8 @@ describe('private deployment configuration', () => {
     );
     expect(source.vars.ACCESS_TEAM_DOMAIN).toBe('');
     expect(source.vars.ACCESS_AUD).toBe('');
+    expect(source.assets.run_worker_first).toEqual(['/api/*']);
+    expect(source.preview_urls).toBe(false);
   });
   it('creates the private metadata overlay without changing the public template or copying keys', () => {
     const before = structuredClone(template);

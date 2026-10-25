@@ -1,5 +1,24 @@
 # Prototype verification
 
+## Incremental sync and resource audit (October 25, 2026)
+
+Passed 272 tests in 40 files with Node 24.13.1 and pnpm 10.33.0, the production
+build, public-source pattern scan and whitespace checks. Backend regression tests
+cover unchanged-history write budgets, incremental corrections and deletions,
+privacy on restore, stale projection repair, transaction rollback, lost
+acknowledgements, overlapping projection revisions and concurrent reuse of an
+operation ID with different content. Committed receipts now guard snapshot writes
+inside the transaction as well as at the request's initial lookup.
+
+An isolated local Wrangler Worker and D1 database passed the integration scripts:
+persistence, retry/content binding, competing revision conflicts, validation,
+export, UTF-8 snapshots above 2 MB, stale chunk removal when shrinking and coherent
+payload/revision reads during concurrent writes. No production workout records
+were used or modified for these checks. Resource and caching details are recorded
+in [the resource audit](cloudflare-resource-audit.md) and [D1 write audit](d1-write-audit.md).
+The protected specification retains SHA256
+`4129a87c82fbc08aa6cb16e27571dd94baf9378c1eb95eb99b66f407b63d1084`.
+
 ## Persistent exercise instructions (October 23, 2026)
 
 The owner selected a simpler notes-only feature. Percentage calculations, reference maxima, rounding controls and grouped prescriptions were removed. The existing routine prescription and workout logging controls remain in place. The protected specification stays unchanged.

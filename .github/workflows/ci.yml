@@ -24,6 +24,14 @@ jobs:
       - run: pnpm check:public
       - run: pnpm test
       - run: pnpm build
+      - name: Save verified application assets
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: application-assets-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 1
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: check
@@ -69,8 +77,12 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
         if: steps.configuration.outputs.ready == 'true'
-      - run: pnpm build
+      - name: Restore verified application assets
         if: steps.configuration.outputs.ready == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: application-assets-${{ github.sha }}
+          path: dist/
       - name: Migrate and deploy
         if: steps.configuration.outputs.ready == 'true'
         env:

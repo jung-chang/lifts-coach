@@ -234,14 +234,6 @@ async function sendOutbox(): Promise<void> {
       return;
     }
     try {
-      // Revalidate immediately before sending so a stale tab cannot post A data with B credentials.
-      const auth = await readSession();
-      if (auth.sequence !== sessionReadGeneration || !isCurrent(accountId, turn)) return;
-      if (auth.session?.accountId !== accountId) {
-        await activateAccount(auth.session, auth.identityStatus);
-        if (auth.session && navigator.onLine) void connectRemote();
-        return;
-      }
       if (!serverAvailable || snapshot.conflict) return;
       publishIfCurrent(accountId, turn, { syncStatus: 'syncing' });
       for (;;) {
@@ -252,6 +244,7 @@ async function sendOutbox(): Promise<void> {
           .sortBy('baseRevision')
           .then((items) => items[0]);
         if (!item) break;
+        // Revalidate once immediately before each send, including the first.
         const beforeWrite = await readSession();
         if (beforeWrite.sequence !== sessionReadGeneration || !isCurrent(accountId, turn)) return;
         if (beforeWrite.session?.accountId !== accountId) {
@@ -425,6 +418,10 @@ export function useAppStore() {
       const current = snapshot.data ?? emptyData(),
         next = validateBackup(updater(structuredClone(current)));
       if (!isCurrent(accountId, turn)) return;
+      // Editor callbacks can legitimately return unchanged data. Do not reserve
+      // a revision or upload another full snapshot for those no-op edits.
+      // Identical restores still need their explicit server-side privacy reset.
+      if (!restore && JSON.stringify(current) === JSON.stringify(next)) return;
       let item!: OutboxItem;
       await db.transaction('rw', db.records, db.outbox, db.meta, async () => {
         const rev = Number((await db.meta.get(metaKey(accountId, 'revision')))?.value ?? 0),

@@ -22,6 +22,13 @@ describe('PWA release assets', () => {
     return handlers;
   };
 
+  it('gives content-hashed build assets long-lived private browser caching', () => {
+    const headers = read('public/_headers').toString();
+    expect(headers).toMatch(/\/assets\/\*\s+Cache-Control: private, max-age=31536000, immutable/);
+    expect(headers).toMatch(/\/sw\.js\s+Cache-Control: no-cache/);
+    expect(headers).toMatch(/\/manifest\.webmanifest\s+Cache-Control: no-cache/);
+  });
+
   it('bypasses private endpoints, query strings, other origins and writes', () => {
     const fetch = vi.fn();
     const handlers = worker(fetch);

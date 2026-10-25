@@ -100,6 +100,20 @@ async function waitForSync() {
 }
 
 describe('durable local store synchronization', () => {
+  it('does not queue or upload no-op edits, while an identical restore remains explicit', async () => {
+    await useStore().update((data) => data);
+    expect(useStore().pendingCount).toBe(0);
+    reconnect();
+    await waitForSync();
+    await useStore().update((data) => structuredClone(data));
+    expect(requests).toHaveLength(0);
+    expect(remote.revision).toBe(0);
+    await useStore().importData(structuredClone(useStore().data));
+    await waitForSync();
+    expect(requests).toHaveLength(1);
+    expect(requests[0].restore).toBe(true);
+  });
+
   it('recovers persistent exercise notes offline and syncs them separately from workout feedback', async () => {
     const exerciseId = catalog[0].id;
     const routine = {

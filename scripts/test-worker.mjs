@@ -17,7 +17,7 @@ const request = (path, body) =>
       : undefined,
   );
 const initial = await (await request('/api/state')).json();
-assert.equal(initial.data.schemaVersion, 1);
+assert.equal(initial.data.schemaVersion, 2);
 const first = {
   operationId: crypto.randomUUID(),
   accountId: session.accountId,

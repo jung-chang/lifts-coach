@@ -8,6 +8,9 @@ import { catalog } from '../shared/catalog';
 
 class TestD1 {
   db = new DatabaseSync(':memory:');
+  writes: { sql: string; changes: number }[] = [];
+  queries: string[] = [];
+  beforeBatch?: (sql: string[]) => Promise<void>;
   constructor() {
     for (const file of [
       '0001_initial.sql',
@@ -19,6 +22,7 @@ class TestD1 {
       this.db.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
   }
   prepare(sql: string) {
+    this.queries.push(sql);
     let values: unknown[] = [];
     const statement = {
       _sql: sql,
@@ -37,12 +41,14 @@ class TestD1 {
       }),
       run: async () => {
         const r = this.db.prepare(sql).run(...(values as never[]));
+        this.writes.push({ sql, changes: Number(r.changes) });
         return { success: true, meta: { changes: Number(r.changes) } };
       },
     };
     return statement;
   }
   async batch(statements: ReturnType<TestD1['prepare']>[]) {
+    await this.beforeBatch?.(statements.map((s) => s._sql));
     this.db.exec('BEGIN');
     try {
       const out = [];
@@ -1403,4 +1409,528 @@ describe('community backend authorization and publication', () => {
     });
     db.db.close();
   });
+});
+
+describe('incremental D1 training projections', () => {
+  const changedRows = (db: TestD1, table: string) =>
+    db.writes
+      .filter((w) =>
+        new RegExp('^(?:INSERT(?: OR IGNORE)? INTO|UPDATE|DELETE FROM) ' + table + '\\b', 'i').test(
+          w.sql,
+        ),
+      )
+      .reduce((sum, w) => sum + w.changes, 0);
+
+  async function setup(shared = false) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1(),
+      owner = await auth('delta@example.test', 'delta-owner');
+    let session = (await (await call(db, owner, '/api/session')).json()) as any;
+    if (shared) {
+      const response = await call(db, owner, '/api/me/sharing', 'PATCH', {
+        summaryEnabled: true,
+        autoPublishWorkouts: true,
+        policyRevision: session.sharing.policyRevision,
+        audienceAcknowledged: true,
+      });
+      expect(response.status).toBe(200);
+      session = await response.json();
+    }
+    const put = (
+      data: ReturnType<typeof finishedData>,
+      baseRevision: number,
+      operationId = 'delta-' + baseRevision,
+      restore = false,
+    ) =>
+      call(db, owner, '/api/state', 'PUT', {
+        accountId: session.accountId,
+        deviceId: 'synthetic-delta',
+        operationId,
+        baseRevision,
+        data,
+        restore,
+      });
+    return { db, owner, session, put };
+  }
+
+  it.each([false, true])(
+    'writes zero unchanged historical rows across 100 workouts (sharing=%s)',
+    async (shared) => {
+      const { db, owner, put } = await setup(shared);
+      try {
+        const data = finishedData();
+        const template = structuredClone(data.workouts[0]);
+        data.workouts = Array.from({ length: 100 }, (_, i) => {
+          const w = structuredClone(template);
+          w.id = 'synthetic-history-' + i;
+          w.exercises[0].name = 'Synthetic snapshot bench';
+          w.exercises[0].actualSets = Array.from({ length: 20 }, (_, j) => ({
+            ...template.exercises[0].actualSets[0],
+            id: 'set-' + j,
+          }));
+          return w;
+        });
+        expect((await put(data, 0)).status).toBe(200);
+        db.writes = [];
+        data.settings.profile.notes = 'Synthetic preference change';
+        db.queries = [];
+        expect((await put(data, 1)).status).toBe(200);
+        expect(db.queries.some((sql) => /FROM training_(sets|workouts)\b/.test(sql))).toBe(false);
+        expect(changedRows(db, 'training_sets')).toBe(0);
+        expect(changedRows(db, 'training_workouts')).toBe(0);
+        expect(changedRows(db, 'workout_publications')).toBe(0);
+        expect(changedRows(db, 'workout_visibility')).toBe(0);
+        expect(changedRows(db, 'training_projection_state')).toBe(1);
+        // Three state/receipt changes plus the account projection marker. Index
+        // maintenance is a D1 metric and is deliberately not estimated here.
+        expect(db.writes.reduce((sum, w) => sum + w.changes, 0)).toBe(4);
+        let revision = 2;
+        const active = structuredClone(template);
+        active.id = 'synthetic-active';
+        active.status = 'active';
+        delete active.completedAt;
+        for (const change of [
+          () => data.workouts.push(active),
+          () => {
+            active.exercises[0].actualSets[0].weight = 135;
+          },
+          () => data.routines.push(createRoutine('Synthetic routine')),
+          () =>
+            data.messages.push({
+              id: 'synthetic-message',
+              role: 'user',
+              text: 'Synthetic Coach question',
+              createdAt: new Date().toISOString(),
+            }),
+        ]) {
+          change();
+          db.writes = [];
+          db.queries = [];
+          expect((await put(data, revision++)).status).toBe(200);
+          expect(db.queries.some((sql) => /FROM training_(sets|workouts)\b/.test(sql))).toBe(false);
+          expect(changedRows(db, 'training_sets')).toBe(0);
+          expect(changedRows(db, 'training_workouts')).toBe(0);
+          expect(changedRows(db, 'workout_publications')).toBe(0);
+        }
+        if (shared) {
+          const feed = (await (await call(db, owner, '/api/community/feed')).json()) as any;
+          expect(feed.items).toHaveLength(20);
+          expect(feed.items[0].exerciseNames).toEqual(['Synthetic snapshot bench']);
+          const detail = (await (
+            await call(db, owner, '/api/community/workouts/' + feed.items[0].id)
+          ).json()) as any;
+          expect(detail.exercises[0].name).toBe('Synthetic snapshot bench');
+          expect(detail.exercises[0].sets).toHaveLength(20);
+        }
+        db.writes = [];
+        expect((await put(data, revision - 1)).status).toBe(200);
+        expect(db.writes.reduce((sum, w) => sum + w.changes, 0)).toBe(0);
+        // More than one 500-row deletion chunk, retaining the workout metadata.
+        for (const workout of data.workouts.slice(0, 40)) workout.exercises[0].actualSets = [];
+        db.writes = [];
+        expect((await put(data, revision)).status).toBe(200);
+        expect(changedRows(db, 'training_sets')).toBe(800);
+        expect(changedRows(db, 'training_workouts')).toBe(0);
+        expect(db.db.prepare('SELECT COUNT(*) n FROM training_sets').get()).toEqual({ n: 1200 });
+      } finally {
+        db.db.close();
+      }
+    },
+  );
+
+  it('updates only corrected sets and removes only missing identities, including duplicate set IDs in different exercises', async () => {
+    const { db, put } = await setup();
+    try {
+      const data = finishedData(),
+        workout = data.workouts[0];
+      const other = structuredClone(workout.exercises[0]);
+      other.id = 'other-instance';
+      workout.exercises.push(other);
+      const second = structuredClone(workout);
+      second.id = 'other-workout';
+      data.workouts.push(second);
+      expect((await put(data, 0)).status).toBe(200);
+      db.writes = [];
+      workout.exercises[0].actualSets[0].weight = 125;
+      workout.exercises[1].actualSets[0].status = 'skipped';
+      expect((await put(data, 1)).status).toBe(200);
+      expect(changedRows(db, 'training_sets')).toBe(2);
+      expect(changedRows(db, 'training_workouts')).toBe(0);
+      expect(
+        db.db
+          .prepare(
+            'SELECT workout_id,exercise_instance_id,weight_lb FROM training_sets ORDER BY workout_id,exercise_instance_id',
+          )
+          .all(),
+      ).toEqual([
+        { workout_id: 'other-workout', exercise_instance_id: 'instance-1', weight_lb: 100 },
+        { workout_id: 'other-workout', exercise_instance_id: 'other-instance', weight_lb: 100 },
+        { workout_id: 'workout-1', exercise_instance_id: 'instance-1', weight_lb: 125 },
+      ]);
+      db.writes = [];
+      workout.exercises[0].id = 'replacement-instance';
+      workout.exercises[0].actualSets.push({
+        ...workout.exercises[0].actualSets[0],
+        id: 'new-set',
+      });
+      data.workouts = [workout];
+      expect((await put(data, 2)).status).toBe(200);
+      expect(
+        db.db
+          .prepare(
+            'SELECT workout_id,exercise_instance_id,set_id FROM training_sets ORDER BY set_id',
+          )
+          .all(),
+      ).toEqual([
+        {
+          workout_id: 'workout-1',
+          exercise_instance_id: 'replacement-instance',
+          set_id: 'new-set',
+        },
+        { workout_id: 'workout-1', exercise_instance_id: 'replacement-instance', set_id: 'set-1' },
+      ]);
+      data.workouts = [];
+      expect((await put(data, 3)).status).toBe(200);
+      expect(db.db.prepare('SELECT COUNT(*) n FROM training_sets').get()).toEqual({ n: 0 });
+      expect(db.db.prepare('SELECT COUNT(*) n FROM training_workouts').get()).toEqual({ n: 0 });
+    } finally {
+      db.db.close();
+    }
+  });
+
+  it('preserves publication identity on title edits and withdraws a corrected last working set', async () => {
+    const { db, owner, put } = await setup(true);
+    try {
+      const data = finishedData();
+      expect((await put(data, 0)).status).toBe(200);
+      const original = db.db.prepare('SELECT id,activity_at FROM workout_publications').get();
+      data.workouts[0].name = 'Corrected synthetic title';
+      db.writes = [];
+      expect((await put(data, 1)).status).toBe(200);
+      expect(changedRows(db, 'training_sets')).toBe(0);
+      expect(changedRows(db, 'workout_publications')).toBe(1);
+      expect(db.db.prepare('SELECT id,activity_at FROM workout_publications').get()).toEqual(
+        original,
+      );
+      const feed = (await (await call(db, owner, '/api/community/feed')).json()) as any;
+      expect(feed.items[0].title).toBe('Corrected synthetic title');
+      data.workouts[0].exercises[0].actualSets[0].kind = 'warmup';
+      expect((await put(data, 2)).status).toBe(200);
+      expect(((await (await call(db, owner, '/api/community/feed')).json()) as any).items).toEqual(
+        [],
+      );
+    } finally {
+      db.db.close();
+    }
+  });
+
+  it('restores identical history without rewriting sets and keeps restored workouts private on replay', async () => {
+    const { db, owner, put } = await setup(true);
+    try {
+      const data = finishedData();
+      expect((await put(data, 0)).status).toBe(200);
+      db.writes = [];
+      expect((await put(data, 1, 'restore-delta', true)).status).toBe(200);
+      expect(changedRows(db, 'training_sets')).toBe(0);
+      expect(changedRows(db, 'training_workouts')).toBe(0);
+      const policy = db.db.prepare('SELECT policy_revision FROM sharing_settings').get();
+      expect(((await (await call(db, owner, '/api/community/feed')).json()) as any).items).toEqual(
+        [],
+      );
+      db.writes = [];
+      expect((await put(data, 1, 'restore-delta', true)).status).toBe(200);
+      expect(db.writes.reduce((sum, w) => sum + w.changes, 0)).toBe(0);
+      expect(db.db.prepare('SELECT policy_revision FROM sharing_settings').get()).toEqual(policy);
+    } finally {
+      db.db.close();
+    }
+  });
+
+  it('recalculates a delta when an older projection commits after its baseline read', async () => {
+    const { db, owner, put } = await setup(true);
+    try {
+      const data = finishedData();
+      expect((await put(data, 0)).status).toBe(200);
+      // Revision 2 state was accepted, but its projection was delayed. Revision 3
+      // reverts its load change. Commit that delayed projection after rev 3 reads
+      // rev 1's baseline; an unguarded empty delta would leave the wrong load.
+      db.db.prepare('UPDATE account_state SET revision=2').run();
+      let injected = false;
+      db.beforeBatch = async (sql) => {
+        if (
+          !injected &&
+          sql.some((s) => s.startsWith('INSERT OR IGNORE INTO training_projection_state'))
+        ) {
+          injected = true;
+          db.db.prepare('UPDATE training_sets SET weight_lb=150').run();
+          db.db.prepare('UPDATE training_projection_state SET source_revision=2').run();
+        }
+      };
+      expect((await put(data, 2)).status).toBe(200);
+      expect(injected).toBe(true);
+      expect(db.db.prepare('SELECT weight_lb FROM training_sets').get()).toEqual({
+        weight_lb: 100,
+      });
+      expect(db.db.prepare('SELECT source_revision FROM training_projection_state').get()).toEqual({
+        source_revision: 3,
+      });
+      // An out-of-date projection must still be unavailable to readers.
+      db.db.prepare('UPDATE account_state SET revision=4').run();
+      const feed = (await (await call(db, owner, '/api/community/feed')).json()) as any;
+      expect(feed.items).toEqual([]);
+    } finally {
+      db.db.close();
+    }
+  });
+
+  it('repairs an outdated projection instead of certifying it when finished training is unchanged', async () => {
+    const { db, put } = await setup();
+    try {
+      const data = finishedData();
+      expect((await put(data, 0)).status).toBe(200);
+      db.db.prepare('UPDATE training_sets SET weight_lb=150').run();
+      db.db.prepare('UPDATE training_projection_state SET source_revision=0').run();
+      data.settings.profile.notes = 'Synthetic unrelated update';
+      db.writes = [];
+      expect((await put(data, 1)).status).toBe(200);
+      expect(changedRows(db, 'training_sets')).toBe(1);
+      expect(db.db.prepare('SELECT weight_lb FROM training_sets').get()).toEqual({
+        weight_lb: 100,
+      });
+      expect(db.db.prepare('SELECT source_revision FROM training_projection_state').get()).toEqual({
+        source_revision: 2,
+      });
+    } finally {
+      db.db.close();
+    }
+  });
+
+  it('rolls back failed projections and repairs a lost acknowledgement on retry', async () => {
+    const { db, put } = await setup();
+    try {
+      const data = finishedData();
+      expect((await put(data, 0)).status).toBe(200);
+      data.workouts[0].exercises[0].actualSets[0].weight = 130;
+      db.db.exec(
+        "CREATE TRIGGER synthetic_projection_failure BEFORE UPDATE ON training_projection_state BEGIN SELECT RAISE(ABORT,'synthetic projection failure'); END;",
+      );
+      expect((await put(data, 1, 'failed-projection')).status).toBe(503);
+      expect(db.db.prepare('SELECT weight_lb FROM training_sets').get()).toEqual({
+        weight_lb: 100,
+      });
+      expect(db.db.prepare('SELECT source_revision FROM training_projection_state').get()).toEqual({
+        source_revision: 1,
+      });
+      expect(db.db.prepare('SELECT revision FROM account_state').get()).toEqual({ revision: 2 });
+      db.db.exec('DROP TRIGGER synthetic_projection_failure');
+      db.writes = [];
+      expect((await put(data, 1, 'failed-projection')).status).toBe(200);
+      expect(changedRows(db, 'account_state')).toBe(0);
+      expect(changedRows(db, 'training_sets')).toBe(1);
+      expect(db.db.prepare('SELECT weight_lb FROM training_sets').get()).toEqual({
+        weight_lb: 130,
+      });
+    } finally {
+      db.db.close();
+    }
+  });
+});
+
+describe('Cloudflare request budgets', () => {
+  it('updates only changed snapshot chunks and deletes surplus chunks after shrinking', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1();
+    try {
+      const token = await auth('chunk-budget@example.test', 'chunk-budget');
+      const session = (await (await call(db, token, '/api/session')).json()) as any;
+      const data = emptyData();
+      data.settings.profile.notes = 'x'.repeat(2_200_000);
+      const put = (baseRevision: number) =>
+        call(db, token, '/api/state', 'PUT', {
+          accountId: session.accountId,
+          operationId: 'chunk-' + baseRevision,
+          deviceId: 'synthetic',
+          baseRevision,
+          data,
+        });
+      const chunkWrites = () =>
+        db.writes
+          .filter((w) => /^(?:INSERT INTO|DELETE FROM) state_chunks/.test(w.sql))
+          .reduce((sum, w) => sum + w.changes, 0);
+      expect((await put(0)).status).toBe(200);
+      expect(db.db.prepare('SELECT COUNT(*) n FROM state_chunks').get()).toEqual({ n: 3 });
+      data.settings.profile.notes = data.settings.profile.notes.slice(0, -1) + 'y';
+      db.writes = [];
+      expect((await put(1)).status).toBe(200);
+      expect(chunkWrites()).toBe(1);
+      const stored = (await (await call(db, token, '/api/state')).json()) as any;
+      expect(stored.data.settings.profile.notes).toBe(data.settings.profile.notes);
+      db.writes = [];
+      expect((await put(1)).status).toBe(200);
+      expect(db.writes.reduce((sum, w) => sum + w.changes, 0)).toBe(0);
+      data.settings.profile.notes = 'Synthetic smaller snapshot';
+      db.writes = [];
+      expect((await put(2)).status).toBe(200);
+      expect(chunkWrites()).toBe(3);
+      expect(db.db.prepare('SELECT chunk_index FROM state_chunks').all()).toEqual([
+        { chunk_index: 0 },
+      ]);
+      expect(((await (await call(db, token, '/api/state')).json()) as any).data).toEqual(data);
+    } finally {
+      db.db.close();
+    }
+  });
+
+  it('loads a full 20-author feed with five D1 queries and no writes', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1();
+    try {
+      const tokens: string[] = [];
+      for (let i = 0; i < 20; i++) {
+        const token = await auth('budget-' + i + '@example.test', 'budget-' + i);
+        tokens.push(token);
+        const session = (await (await call(db, token, '/api/session')).json()) as any;
+        expect(
+          (
+            await call(db, token, '/api/me/sharing', 'PATCH', {
+              summaryEnabled: false,
+              autoPublishWorkouts: true,
+              policyRevision: session.sharing.policyRevision,
+              audienceAcknowledged: true,
+            })
+          ).status,
+        ).toBe(200);
+        const data = finishedData();
+        // Workout and set IDs intentionally repeat across owners.
+        data.workouts[0].name = 'Synthetic author ' + i;
+        data.workouts[0].exercises[0].name = 'Synthetic exercise ' + i;
+        const warmup = structuredClone(data.workouts[0].exercises[0]);
+        warmup.id = 'warmup-instance';
+        warmup.actualSets[0].kind = 'warmup';
+        data.workouts[0].exercises.push(warmup);
+        expect(
+          (
+            await call(db, token, '/api/state', 'PUT', {
+              accountId: session.accountId,
+              operationId: 'budget-sync',
+              deviceId: 'synthetic',
+              baseRevision: 0,
+              data,
+            })
+          ).status,
+        ).toBe(200);
+      }
+      db.queries = [];
+      db.writes = [];
+      const response = await call(db, tokens[0], '/api/community/feed');
+      expect(response.status).toBe(200);
+      const feed = (await response.json()) as any;
+      expect(feed.items).toHaveLength(20);
+      for (const item of feed.items) {
+        const author = item.title.replace('Synthetic author ', '');
+        expect(item.exerciseNames).toEqual(['Synthetic exercise ' + author]);
+        expect(item.exerciseCount).toBe(2);
+        expect(item.setCount).toBe(1);
+      }
+      expect(db.queries).toHaveLength(5);
+      expect(db.writes.reduce((sum, write) => sum + write.changes, 0)).toBe(0);
+      // Empty feeds should not load any private history snapshots.
+      db.db.prepare("UPDATE workout_visibility SET visibility='private'").run();
+      db.queries = [];
+      expect(
+        ((await (await call(db, tokens[0], '/api/community/feed')).json()) as any).items,
+      ).toEqual([]);
+      expect(db.queries).toHaveLength(2);
+    } finally {
+      db.db.close();
+    }
+  });
+
+  it('reads one coherent saved snapshot per sync rather than reading it again for the version check', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1();
+    try {
+      const token = await auth('snapshot-budget@example.test', 'snapshot-budget');
+      const session = (await (await call(db, token, '/api/session')).json()) as any;
+      db.queries = [];
+      expect(
+        (
+          await call(db, token, '/api/state', 'PUT', {
+            accountId: session.accountId,
+            operationId: 'snapshot-budget',
+            deviceId: 'synthetic',
+            baseRevision: 0,
+            data: emptyData(),
+          })
+        ).status,
+      ).toBe(200);
+      expect(
+        db.queries.filter((sql) => sql.includes('SELECT content FROM state_chunks')),
+      ).toHaveLength(1);
+    } finally {
+      db.db.close();
+    }
+  });
+});
+
+describe('concurrent sync receipt integrity', () => {
+  it.each([0, 1])(
+    'never mutates a committed operation when another request reuses its ID (base revision %s)',
+    async (baseRevision) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => Response.json(jwks)),
+      );
+      const db = new TestD1();
+      try {
+        const token = await auth('receipt-race@example.test', 'receipt-race');
+        const session = (await (await call(db, token, '/api/session')).json()) as any;
+        const committed = finishedData();
+        committed.settings.profile.notes = 'x'.repeat(2_200_000);
+        const competing = finishedData();
+        competing.workouts[0].name = 'Rejected competing snapshot';
+        const request = (data: typeof committed, base: number) =>
+          call(db, token, '/api/state', 'PUT', {
+            accountId: session.accountId,
+            operationId: 'shared-operation',
+            deviceId: 'synthetic',
+            baseRevision: base,
+            data,
+          });
+        let overlapped = false;
+        db.beforeBatch = async (sql) => {
+          if (!sql.some((statement) => statement.startsWith('UPDATE account_state SET'))) return;
+          db.beforeBatch = undefined;
+          // Both requests checked the receipt before the winner committed.
+          expect((await request(committed, 0)).status).toBe(200);
+          overlapped = true;
+          db.writes = [];
+        };
+        expect((await request(competing, baseRevision)).status).toBe(400);
+        expect(overlapped).toBe(true);
+        expect(db.writes.reduce((sum, write) => sum + write.changes, 0)).toBe(0);
+        const saved = (await (await call(db, token, '/api/state')).json()) as any;
+        expect(saved.revision).toBe(1);
+        expect(saved.data).toEqual(committed);
+        expect(db.db.prepare('SELECT COUNT(*) n FROM state_chunks').get()).toEqual({ n: 3 });
+        expect(
+          db.db.prepare('SELECT source_revision FROM training_projection_state').get(),
+        ).toEqual({ source_revision: 1 });
+      } finally {
+        db.db.close();
+      }
+    },
+  );
 });

@@ -80,58 +80,68 @@ async function resolveAccount(
       coach_enabled: number;
     }>();
   if (found && found.emailNormalized !== normalized) return null;
-  let id = found?.id;
-  if (!id) {
-    const collision = await env.DB.prepare('SELECT id FROM accounts WHERE email_normalized = ?')
-      .bind(normalized)
-      .first();
-    if (collision) return null;
-    id = await identityUuid(identity.issuer, identity.subject);
-    const legacyId = identity.local ? null : await legacySubjectKey(identity.subject);
-    const publicId = crypto.randomUUID();
-    const displayName = `Member ${publicId.slice(0, 4)}`;
-    await env.DB.batch([
-      env.DB.prepare(
-        "INSERT OR IGNORE INTO accounts (id,email,email_normalized,access_issuer,access_subject,status,coach_enabled,created_at,updated_at) VALUES (?,?,?,?,?,'active',?,?,?)",
-      ).bind(id, identity.email, normalized, identity.issuer, identity.subject, coach, now, now),
-      env.DB.prepare(
-        "INSERT OR IGNORE INTO profiles (account_id,public_id,display_name,training_timezone,created_at,updated_at) SELECT id,?,?,'UTC',?,? FROM accounts WHERE access_issuer=? AND access_subject=?",
-      ).bind(publicId, displayName, now, now, identity.issuer, identity.subject),
-      env.DB.prepare(
-        'INSERT OR IGNORE INTO sharing_settings (account_id,updated_at) SELECT id,? FROM accounts WHERE access_issuer=? AND access_subject=?',
-      ).bind(now, identity.issuer, identity.subject),
-      env.DB.prepare(
-        "INSERT OR IGNORE INTO account_state (account_id,payload,revision,updated_at,device_id,last_operation_id) SELECT id,COALESCE((SELECT payload FROM legacy_account_state WHERE id=?),?),COALESCE((SELECT revision FROM legacy_account_state WHERE id=?),0),COALESCE((SELECT updated_at FROM legacy_account_state WHERE id=?),?),COALESCE((SELECT device_id FROM legacy_account_state WHERE id=?),''),COALESCE((SELECT last_operation_id FROM legacy_account_state WHERE id=?),'') FROM accounts WHERE access_issuer=? AND access_subject=?",
-      ).bind(
-        legacyId ?? '',
-        JSON.stringify(emptyData()),
-        legacyId ?? '',
-        legacyId ?? '',
-        now,
-        legacyId ?? '',
-        legacyId ?? '',
-        identity.issuer,
-        identity.subject,
-      ),
-      ...(legacyId
-        ? [
-            env.DB.prepare(
-              'INSERT OR IGNORE INTO state_chunks SELECT (SELECT id FROM accounts WHERE access_issuer=? AND access_subject=?),chunk_index,content FROM legacy_state_chunks WHERE account_id=?',
-            ).bind(identity.issuer, identity.subject, legacyId),
-            env.DB.prepare(
-              'INSERT OR IGNORE INTO sync_receipts SELECT (SELECT id FROM accounts WHERE access_issuer=? AND access_subject=?),operation_id,revision,created_at,fingerprint FROM legacy_sync_receipts WHERE account_id=?',
-            ).bind(identity.issuer, identity.subject, legacyId),
-            env.DB.prepare(
-              'INSERT OR IGNORE INTO coach_requests SELECT (SELECT id FROM accounts WHERE access_issuer=? AND access_subject=?),id,created_at FROM legacy_coach_requests WHERE account_id=?',
-            ).bind(identity.issuer, identity.subject, legacyId),
-            env.DB.prepare('DELETE FROM legacy_state_chunks WHERE account_id=?').bind(legacyId),
-            env.DB.prepare('DELETE FROM legacy_sync_receipts WHERE account_id=?').bind(legacyId),
-            env.DB.prepare('DELETE FROM legacy_coach_requests WHERE account_id=?').bind(legacyId),
-            env.DB.prepare('DELETE FROM legacy_account_state WHERE id=?').bind(legacyId),
-          ]
-        : []),
-    ]);
+  if (found) {
+    if (found.status !== 'active') return null;
+    if (found.coach_enabled !== coach) {
+      const updated = await env.DB.prepare(
+        "UPDATE accounts SET coach_enabled=?,updated_at=? WHERE id=? AND status='active'",
+      )
+        .bind(coach, now, found.id)
+        .run();
+      if (!updated.meta.changes) return null;
+      found.coach_enabled = coach;
+    }
+    return found;
   }
+  const collision = await env.DB.prepare('SELECT id FROM accounts WHERE email_normalized = ?')
+    .bind(normalized)
+    .first();
+  if (collision) return null;
+  const id = await identityUuid(identity.issuer, identity.subject);
+  const legacyId = identity.local ? null : await legacySubjectKey(identity.subject);
+  const publicId = crypto.randomUUID();
+  const displayName = `Member ${publicId.slice(0, 4)}`;
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO accounts (id,email,email_normalized,access_issuer,access_subject,status,coach_enabled,created_at,updated_at) VALUES (?,?,?,?,?,'active',?,?,?)",
+    ).bind(id, identity.email, normalized, identity.issuer, identity.subject, coach, now, now),
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO profiles (account_id,public_id,display_name,training_timezone,created_at,updated_at) SELECT id,?,?,'UTC',?,? FROM accounts WHERE access_issuer=? AND access_subject=?",
+    ).bind(publicId, displayName, now, now, identity.issuer, identity.subject),
+    env.DB.prepare(
+      'INSERT OR IGNORE INTO sharing_settings (account_id,updated_at) SELECT id,? FROM accounts WHERE access_issuer=? AND access_subject=?',
+    ).bind(now, identity.issuer, identity.subject),
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO account_state (account_id,payload,revision,updated_at,device_id,last_operation_id) SELECT id,COALESCE((SELECT payload FROM legacy_account_state WHERE id=?),?),COALESCE((SELECT revision FROM legacy_account_state WHERE id=?),0),COALESCE((SELECT updated_at FROM legacy_account_state WHERE id=?),?),COALESCE((SELECT device_id FROM legacy_account_state WHERE id=?),''),COALESCE((SELECT last_operation_id FROM legacy_account_state WHERE id=?),'') FROM accounts WHERE access_issuer=? AND access_subject=?",
+    ).bind(
+      legacyId ?? '',
+      JSON.stringify(emptyData()),
+      legacyId ?? '',
+      legacyId ?? '',
+      now,
+      legacyId ?? '',
+      legacyId ?? '',
+      identity.issuer,
+      identity.subject,
+    ),
+    ...(legacyId
+      ? [
+          env.DB.prepare(
+            'INSERT OR IGNORE INTO state_chunks SELECT (SELECT id FROM accounts WHERE access_issuer=? AND access_subject=?),chunk_index,content FROM legacy_state_chunks WHERE account_id=?',
+          ).bind(identity.issuer, identity.subject, legacyId),
+          env.DB.prepare(
+            'INSERT OR IGNORE INTO sync_receipts SELECT (SELECT id FROM accounts WHERE access_issuer=? AND access_subject=?),operation_id,revision,created_at,fingerprint FROM legacy_sync_receipts WHERE account_id=?',
+          ).bind(identity.issuer, identity.subject, legacyId),
+          env.DB.prepare(
+            'INSERT OR IGNORE INTO coach_requests SELECT (SELECT id FROM accounts WHERE access_issuer=? AND access_subject=?),id,created_at FROM legacy_coach_requests WHERE account_id=?',
+          ).bind(identity.issuer, identity.subject, legacyId),
+          env.DB.prepare('DELETE FROM legacy_state_chunks WHERE account_id=?').bind(legacyId),
+          env.DB.prepare('DELETE FROM legacy_sync_receipts WHERE account_id=?').bind(legacyId),
+          env.DB.prepare('DELETE FROM legacy_coach_requests WHERE account_id=?').bind(legacyId),
+          env.DB.prepare('DELETE FROM legacy_account_state WHERE id=?').bind(legacyId),
+        ]
+      : []),
+  ]);
   const current = await env.DB.prepare(
     'SELECT id,email,status,coach_enabled FROM accounts WHERE access_issuer=? AND access_subject=?',
   )
@@ -163,11 +173,19 @@ async function identityUuid(issuer: string, subject: string) {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 async function readState(env: Env, accountId: string) {
-  await env.DB.prepare(
-    "INSERT OR IGNORE INTO account_state (account_id,payload,revision,updated_at,device_id,last_operation_id) VALUES (?,?,0,?,'','')",
-  )
-    .bind(accountId, JSON.stringify(emptyData()), new Date().toISOString())
-    .run();
+  let state = await readRawState(env, accountId);
+  if (!state) {
+    await env.DB.prepare(
+      "INSERT OR IGNORE INTO account_state (account_id,payload,revision,updated_at,device_id,last_operation_id) VALUES (?,?,0,?,'','')",
+    )
+      .bind(accountId, JSON.stringify(emptyData()), new Date().toISOString())
+      .run();
+    state = await readRawState(env, accountId);
+  }
+  if (!state) throw new Error('Account state is unavailable.');
+  return { data: validateBackup(state.data), revision: state.revision };
+}
+async function readRawState(env: Env, accountId: string) {
   // D1 batches execute transactionally: metadata and chunks must describe the
   // same revision even when another device is writing concurrently.
   const [metadata, contents] = await env.DB.batch([
@@ -179,27 +197,14 @@ async function readState(env: Env, accountId: string) {
     ).bind(accountId),
   ]);
   const row = metadata.results[0] as { payload: string; revision: number };
+  if (!row) return null;
   const chunks = contents.results as { content: string }[];
   return {
-    data: validateBackup(
-      JSON.parse(chunks.length ? chunks.map((chunk) => chunk.content).join('') : row.payload),
-    ),
+    data: JSON.parse(
+      chunks.length ? chunks.map((chunk) => chunk.content).join('') : row.payload,
+    ) as unknown,
     revision: row.revision,
   };
-}
-async function storedSchemaVersion(env: Env, accountId: string): Promise<number> {
-  const [metadata, contents] = await env.DB.batch([
-    env.DB.prepare('SELECT payload FROM account_state WHERE account_id = ?').bind(accountId),
-    env.DB.prepare(
-      'SELECT content FROM state_chunks WHERE account_id = ? ORDER BY chunk_index',
-    ).bind(accountId),
-  ]);
-  const payload = (contents.results as { content: string }[]).length
-    ? (contents.results as { content: string }[]).map((chunk) => chunk.content).join('')
-    : (metadata.results[0] as { payload: string } | undefined)?.payload;
-  if (!payload) return 0;
-  const parsed = JSON.parse(payload) as { schemaVersion?: unknown };
-  return typeof parsed.schemaVersion === 'number' ? parsed.schemaVersion : 0;
 }
 async function getSession(env: Env, accountId: string) {
   const row = await env.DB.prepare(
@@ -235,13 +240,23 @@ function trainingDate(instant: string, timezone: string) {
     day: '2-digit',
   }).format(new Date(instant));
 }
+// Advance the complete account projection atomically without rewriting unchanged
+// history. Workout source_revision records its last metadata change; readers
+// still require the account projection marker to equal current account state.
 async function rebuildProjection(
   env: Env,
   accountId: string,
   revision: number,
   data: ReturnType<typeof validateBackup>,
   restore: boolean,
+  attempt = 0,
 ) {
+  const alreadyProjected = await env.DB.prepare(
+    'SELECT source_revision sourceRevision FROM training_projection_state WHERE account_id=?',
+  )
+    .bind(accountId)
+    .first<{ sourceRevision: number }>();
+  if (alreadyProjected?.sourceRevision === revision) return;
   const now = new Date().toISOString(),
     profile = await profileDto(env, accountId),
     settings = await env.DB.prepare(
@@ -251,23 +266,36 @@ async function rebuildProjection(
       .first<Record<string, any>>();
   const valid = data.workouts.filter((w) => w.status === 'finished');
   const validIds = new Set(valid.map((w) => w.id));
-  const projected = await env.DB.prepare(
-    'SELECT source_revision sourceRevision FROM training_projection_state WHERE account_id=?',
-  )
-    .bind(accountId)
-    .first<{ sourceRevision: number }>();
+  // Read a coherent baseline. The transaction below checks this revision again:
+  // another request may finish a projection while we calculate the delta.
+  const [projectionRows, existingRows, setRows] = await env.DB.batch([
+    env.DB.prepare(
+      'SELECT source_revision sourceRevision FROM training_projection_state WHERE account_id=?',
+    ).bind(accountId),
+    env.DB.prepare(
+      'SELECT workout_id workoutId,started_at startedAt,training_date trainingDate,training_timezone trainingTimezone,completed_at completedAt FROM training_workouts WHERE account_id=?',
+    ).bind(accountId),
+    env.DB.prepare(
+      'SELECT workout_id workoutId,set_id id,exercise_instance_id instanceId,exercise_id exerciseId,load_mode loadMode,weight_lb weight,reps,kind,completed_at completedAt FROM training_sets WHERE account_id=?',
+    ).bind(accountId),
+  ]);
+  const projected = projectionRows.results[0] as { sourceRevision: number } | undefined;
   if (projected?.sourceRevision === revision) return;
-  const existingRows = await env.DB.prepare(
-    'SELECT workout_id workoutId,training_date trainingDate,training_timezone trainingTimezone,completed_at completedAt FROM training_workouts WHERE account_id=?',
-  )
-    .bind(accountId)
-    .all<Record<string, string>>();
-  const existing = new Map(existingRows.results.map((row) => [row.workoutId, row]));
+  const baseline = projected?.sourceRevision ?? -1;
+  if (!Number.isSafeInteger(baseline)) throw new Error('Invalid projection revision.');
+  const existing = new Map(
+    (existingRows.results as Record<string, string>[]).map((row) => [row.workoutId, row]),
+  );
+  const setKey = (set: Record<string, unknown>) =>
+    JSON.stringify([set.workoutId, set.instanceId, set.id]);
+  const existingSets = new Map(
+    (setRows.results as Record<string, unknown>[]).map((set) => [setKey(set), set]),
+  );
   const statements: ReturnType<Env['DB']['prepare']>[] = [];
-  const currentGuard = 'EXISTS(SELECT 1 FROM account_state WHERE account_id=? AND revision=?)';
+  const currentGuard = `EXISTS(SELECT 1 FROM account_state WHERE account_id=? AND revision=? AND COALESCE((SELECT source_revision FROM training_projection_state WHERE account_id=account_state.account_id),-1)=${baseline})`;
   statements.push(
     env.DB.prepare(
-      `INSERT OR IGNORE INTO training_projection_state(account_id,source_revision,built_at) SELECT ?,0,? WHERE ${currentGuard}`,
+      `INSERT OR IGNORE INTO training_projection_state(account_id,source_revision,built_at) SELECT ?,-1,? WHERE ${currentGuard}`,
     ).bind(accountId, now, accountId, revision),
   );
   const workouts: Record<string, unknown>[] = [];
@@ -276,24 +304,19 @@ async function rebuildProjection(
   if (restore)
     statements.push(
       env.DB.prepare(
-        `UPDATE workout_visibility SET visibility='private',decision_revision=decision_revision+1,updated_at=? WHERE account_id=? AND ${currentGuard}`,
+        `UPDATE workout_visibility SET visibility='private',decision_revision=decision_revision+1,updated_at=? WHERE account_id=? AND visibility<>'private' AND ${currentGuard}`,
       ).bind(now, accountId, accountId, revision),
     );
   else
     statements.push(
       env.DB.prepare(
-        `UPDATE workout_visibility SET visibility='private',decision_revision=decision_revision+1,updated_at=? WHERE account_id=? AND workout_id NOT IN (SELECT value FROM json_each(?)) AND ${currentGuard}`,
+        `UPDATE workout_visibility SET visibility='private',decision_revision=decision_revision+1,updated_at=? WHERE account_id=? AND visibility<>'private' AND workout_id NOT IN (SELECT value FROM json_each(?)) AND ${currentGuard}`,
       ).bind(now, accountId, JSON.stringify([...validIds]), accountId, revision),
     );
   statements.push(
     env.DB.prepare(
       `DELETE FROM training_workouts WHERE account_id=? AND workout_id NOT IN (SELECT value FROM json_each(?)) AND ${currentGuard}`,
     ).bind(accountId, JSON.stringify([...validIds]), accountId, revision),
-    env.DB.prepare(`DELETE FROM training_sets WHERE account_id=? AND ${currentGuard}`).bind(
-      accountId,
-      accountId,
-      revision,
-    ),
   );
   for (const w of valid) {
     const old = existing.get(w.id),
@@ -312,14 +335,21 @@ async function rebuildProjection(
     const date =
       captured.trainingDate ||
       (old?.completedAt === completed ? old.trainingDate : trainingDate(completed, timezone));
-    workouts.push({
-      workoutId: w.id,
-      startedAt: w.startedAt,
-      completedAt: completed,
-      trainingDate: date,
-      trainingTimezone: timezone,
-      sourceRevision: revision,
-    });
+    if (
+      !old ||
+      old.startedAt !== w.startedAt ||
+      old.completedAt !== completed ||
+      old.trainingDate !== date ||
+      old.trainingTimezone !== timezone
+    )
+      workouts.push({
+        workoutId: w.id,
+        startedAt: w.startedAt,
+        completedAt: completed,
+        trainingDate: date,
+        trainingTimezone: timezone,
+        sourceRevision: revision,
+      });
     const workoutSets = w.exercises.flatMap((ex) =>
       ex.actualSets
         .filter((set) => set.status === 'completed')
@@ -335,7 +365,13 @@ async function rebuildProjection(
           completedAt: set.completedAt || w.completedAt || w.updatedAt,
         })),
     );
-    allSets.push(...workoutSets);
+    for (const set of workoutSets) {
+      const key = setKey(set),
+        previous = existingSets.get(key);
+      existingSets.delete(key);
+      if (!previous || Object.entries(set).some(([field, value]) => previous[field] !== value))
+        allSets.push(set);
+    }
     const explicit = (
       w as typeof w & {
         communityVisibility?: { visibility: 'private' | 'community'; policyRevision: number };
@@ -377,6 +413,13 @@ async function rebuildProjection(
       );
     }
   };
+  // Deleting a workout cascades its sets. For retained workouts delete only
+  // removed set identities, including sets corrected back to incomplete.
+  insertChunks(
+    [...existingSets.values()].filter((set) => validIds.has(String(set.workoutId))),
+    500,
+    `DELETE FROM training_sets WHERE account_id=? AND (workout_id,exercise_instance_id,set_id) IN (SELECT json_extract(value,'$.workoutId'),json_extract(value,'$.instanceId'),json_extract(value,'$.id') FROM json_each(?)) AND ${currentGuard}`,
+  );
   insertChunks(
     workouts,
     100,
@@ -385,18 +428,19 @@ async function rebuildProjection(
   insertChunks(
     allSets,
     500,
-    `INSERT INTO training_sets(account_id,workout_id,set_id,exercise_instance_id,exercise_id,load_mode,weight_lb,reps,kind,completed_at) SELECT ?,json_extract(value,'$.workoutId'),json_extract(value,'$.id'),json_extract(value,'$.instanceId'),json_extract(value,'$.exerciseId'),json_extract(value,'$.loadMode'),json_extract(value,'$.weight'),json_extract(value,'$.reps'),json_extract(value,'$.kind'),json_extract(value,'$.completedAt') FROM json_each(?) WHERE ${currentGuard}`,
+    `INSERT INTO training_sets(account_id,workout_id,set_id,exercise_instance_id,exercise_id,load_mode,weight_lb,reps,kind,completed_at) SELECT ?,json_extract(value,'$.workoutId'),json_extract(value,'$.id'),json_extract(value,'$.instanceId'),json_extract(value,'$.exerciseId'),json_extract(value,'$.loadMode'),json_extract(value,'$.weight'),json_extract(value,'$.reps'),json_extract(value,'$.kind'),json_extract(value,'$.completedAt') FROM json_each(?) WHERE ${currentGuard} ON CONFLICT(account_id,workout_id,exercise_instance_id,set_id) DO UPDATE SET exercise_id=excluded.exercise_id,load_mode=excluded.load_mode,weight_lb=excluded.weight_lb,reps=excluded.reps,kind=excluded.kind,completed_at=excluded.completed_at`,
   );
   insertChunks(
     visibility,
     100,
     `INSERT OR IGNORE INTO workout_visibility(account_id,workout_id,visibility,decision_revision,updated_at) SELECT ?,json_extract(value,'$.workoutId'),CASE WHEN json_extract(value,'$.visibility')='community' AND EXISTS(SELECT 1 FROM sharing_settings s WHERE s.account_id=json_extract(value,'$.accountId') AND s.policy_revision=json_extract(value,'$.policyRevision')) THEN 'community' ELSE 'private' END,0,json_extract(value,'$.updatedAt') FROM json_each(?) WHERE ${currentGuard}`,
   );
-  const final = [
+  const markComplete = [
     env.DB.prepare(
       `INSERT INTO training_projection_state(account_id,source_revision,built_at) SELECT ?,?,? WHERE ${currentGuard} ON CONFLICT(account_id) DO UPDATE SET source_revision=excluded.source_revision,built_at=excluded.built_at WHERE excluded.source_revision>=training_projection_state.source_revision`,
     ).bind(accountId, revision, now, accountId, revision),
   ];
+  const final: ReturnType<Env['DB']['prepare']>[] = [];
   if (restore)
     final.push(
       env.DB.prepare(
@@ -415,7 +459,7 @@ async function rebuildProjection(
     );
     final.push(
       env.DB.prepare(
-        "INSERT INTO workout_publications(account_id,workout_id,id,activity_at,published_at,shared_title) SELECT tw.account_id,tw.workout_id,lower(hex(randomblob(16))),tw.completed_at,?,COALESCE((SELECT json_extract(value,'$.title') FROM json_each(?) WHERE json_extract(value,'$.workoutId')=tw.workout_id),'Workout') FROM training_workouts tw JOIN workout_visibility v USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=tw.account_id AND ast.revision=ps.source_revision WHERE tw.account_id=? AND v.visibility='community' AND ps.source_revision=? AND EXISTS(SELECT 1 FROM training_sets ts WHERE ts.account_id=tw.account_id AND ts.workout_id=tw.workout_id AND ts.kind='working') ON CONFLICT(account_id,workout_id) DO UPDATE SET shared_title=excluded.shared_title",
+        `INSERT INTO workout_publications(account_id,workout_id,id,activity_at,published_at,shared_title) SELECT tw.account_id,tw.workout_id,lower(hex(randomblob(16))),tw.completed_at,?,COALESCE((SELECT json_extract(value,'$.title') FROM json_each(?) WHERE json_extract(value,'$.workoutId')=tw.workout_id),'Workout') FROM training_workouts tw JOIN workout_visibility v USING(account_id,workout_id) JOIN account_state ast ON ast.account_id=tw.account_id WHERE tw.account_id=? AND v.visibility='community' AND ast.revision=? AND COALESCE((SELECT source_revision FROM training_projection_state WHERE account_id=tw.account_id),-1)=${baseline} AND EXISTS(SELECT 1 FROM training_sets ts WHERE ts.account_id=tw.account_id AND ts.workout_id=tw.workout_id AND ts.kind='working') ON CONFLICT(account_id,workout_id) DO UPDATE SET shared_title=excluded.shared_title WHERE workout_publications.shared_title IS NOT excluded.shared_title`,
       ).bind(
         now,
         JSON.stringify(valid.map((workout) => ({ workoutId: workout.id, title: workout.name }))),
@@ -424,7 +468,21 @@ async function rebuildProjection(
       ),
     );
   }
-  await env.DB.batch([...statements, ...final]);
+  await env.DB.batch([...statements, ...final, ...markComplete]);
+  const completedProjection = await env.DB.prepare(
+    'SELECT source_revision sourceRevision FROM training_projection_state WHERE account_id=?',
+  )
+    .bind(accountId)
+    .first<{ sourceRevision: number }>();
+  if (completedProjection?.sourceRevision !== revision) {
+    const current = await env.DB.prepare('SELECT revision FROM account_state WHERE account_id=?')
+      .bind(accountId)
+      .first<{ revision: number }>();
+    if (current?.revision === revision) {
+      if (attempt >= 2) throw new Error('Projection changed concurrently. Retry synchronization.');
+      await rebuildProjection(env, accountId, revision, data, restore, attempt + 1);
+    }
+  }
 }
 app.get('/api/session', async (c) => c.json(await getSession(c.env, c.get('accountId'))));
 app.patch('/api/me/profile', async (c) => {
@@ -514,7 +572,9 @@ function exerciseLabel(id: string) {
   return catalog.find((e) => e.id === id)?.name || 'Custom exercise';
 }
 async function accountPersonalRecords(env: Env, accountId: string) {
-  const state = await readState(env, accountId);
+  return statePersonalRecords(await readState(env, accountId));
+}
+function statePersonalRecords(state: Awaited<ReturnType<typeof readState>>) {
   return {
     ...personalRecordsFromWorkouts(state.data.workouts, state.data.exercises),
     revision: state.revision,
@@ -527,6 +587,40 @@ async function accountPersonalRecords(env: Env, accountId: string) {
     ),
   };
 }
+async function feedPersonalRecords(env: Env, accountIds: string[]) {
+  const records = new Map<string, ReturnType<typeof statePersonalRecords>>();
+  if (!accountIds.length) return records;
+  // Two coherent bulk reads instead of three queries for each feed author.
+  // This cache lives only for this request; authorization stays fresh on every read.
+  const ids = JSON.stringify(accountIds);
+  const [metadata, contents] = await env.DB.batch([
+    env.DB.prepare(
+      'SELECT account_id accountId,payload,revision FROM account_state WHERE account_id IN (SELECT value FROM json_each(?))',
+    ).bind(ids),
+    env.DB.prepare(
+      'SELECT account_id accountId,content FROM state_chunks WHERE account_id IN (SELECT value FROM json_each(?)) ORDER BY account_id,chunk_index',
+    ).bind(ids),
+  ]);
+  const chunks = new Map<string, string[]>();
+  for (const row of contents.results as { accountId: string; content: string }[]) {
+    if (!chunks.has(row.accountId)) chunks.set(row.accountId, []);
+    chunks.get(row.accountId)!.push(row.content);
+  }
+  for (const row of metadata.results as {
+    accountId: string;
+    payload: string;
+    revision: number;
+  }[]) {
+    records.set(
+      row.accountId,
+      statePersonalRecords({
+        data: validateBackup(JSON.parse(chunks.get(row.accountId)?.join('') || row.payload)),
+        revision: row.revision,
+      }),
+    );
+  }
+  return records;
+}
 async function feedItems(
   env: Env,
   viewer: string,
@@ -535,7 +629,7 @@ async function feedItems(
 ) {
   const pageSize = owner ? 5 : 20;
   const rows = await env.DB.prepare(
-    `SELECT p.id,p.account_id accountId,p.workout_id workoutId,p.shared_title sharedTitle,p.activity_at activityAt,pr.public_id publicId,pr.display_name displayName,pr.training_timezone trainingTimezone,tw.training_date trainingDate,tw.started_at startedAt,tw.completed_at completedAt,tw.source_revision sourceRevision FROM workout_publications p JOIN training_workouts tw USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=p.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=p.account_id AND ast.revision=ps.source_revision JOIN workout_visibility v USING(account_id,workout_id) JOIN sharing_settings s ON s.account_id=p.account_id JOIN accounts a ON a.id=p.account_id AND a.status='active' JOIN profiles pr ON pr.account_id=p.account_id WHERE v.visibility='community' AND (? IS NULL OR p.account_id=?) AND (? IS NULL OR (p.activity_at,p.id)<(?,?)) AND NOT EXISTS(SELECT 1 FROM account_blocks b WHERE (b.account_id=? AND b.blocked_account_id=p.account_id) OR (b.account_id=p.account_id AND b.blocked_account_id=?)) ORDER BY p.activity_at DESC,p.id DESC LIMIT ?`,
+    `SELECT p.id,p.account_id accountId,p.workout_id workoutId,p.shared_title sharedTitle,p.activity_at activityAt,pr.public_id publicId,pr.display_name displayName,pr.training_timezone trainingTimezone,tw.training_date trainingDate,tw.started_at startedAt,tw.completed_at completedAt,ps.source_revision sourceRevision FROM workout_publications p JOIN training_workouts tw USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=p.account_id AND ps.source_revision>=tw.source_revision JOIN account_state ast ON ast.account_id=p.account_id AND ast.revision=ps.source_revision JOIN workout_visibility v USING(account_id,workout_id) JOIN sharing_settings s ON s.account_id=p.account_id JOIN accounts a ON a.id=p.account_id AND a.status='active' JOIN profiles pr ON pr.account_id=p.account_id WHERE v.visibility='community' AND (? IS NULL OR p.account_id=?) AND (? IS NULL OR (p.activity_at,p.id)<(?,?)) AND NOT EXISTS(SELECT 1 FROM account_blocks b WHERE (b.account_id=? AND b.blocked_account_id=p.account_id) OR (b.account_id=p.account_id AND b.blocked_account_id=?)) ORDER BY p.activity_at DESC,p.id DESC LIMIT ?`,
   )
     .bind(
       owner ?? null,
@@ -549,22 +643,42 @@ async function feedItems(
     )
     .all<Record<string, any>>();
   const items = [];
-  const recordsByAccount = new Map<string, Awaited<ReturnType<typeof accountPersonalRecords>>>();
-  for (const row of rows.results.slice(0, pageSize)) {
-    const summary = await env.DB.prepare(
-      "SELECT COUNT(DISTINCT exercise_instance_id) exerciseCount,SUM(CASE WHEN kind='working' THEN 1 ELSE 0 END) setCount,MIN(CASE WHEN kind='working' THEN exercise_id END) firstExercise FROM training_sets WHERE account_id=? AND workout_id=?",
-    )
-      .bind(row.accountId, row.workoutId)
-      .first<Record<string, any>>();
-    if (!summary?.setCount) continue;
-    if (!recordsByAccount.has(row.accountId))
-      recordsByAccount.set(row.accountId, await accountPersonalRecords(env, row.accountId));
-    const personalRecords = recordsByAccount.get(row.accountId)!;
-    const names = await env.DB.prepare(
-      "SELECT exercise_id exerciseId,exercise_instance_id exerciseInstanceId FROM training_sets WHERE account_id=? AND workout_id=? AND kind='working' GROUP BY exercise_instance_id ORDER BY exercise_instance_id LIMIT 2",
-    )
-      .bind(row.accountId, row.workoutId)
-      .all<{ exerciseId: string; exerciseInstanceId: string }>();
+  const page = rows.results.slice(0, pageSize);
+  const recordsByAccount = await feedPersonalRecords(env, [
+    ...new Set(page.map((row) => row.accountId as string)),
+  ]);
+  const sets = page.length
+    ? await env.DB.prepare(
+        "SELECT ts.account_id accountId,ts.workout_id workoutId,ts.exercise_instance_id exerciseInstanceId,ts.exercise_id exerciseId,ts.kind FROM training_sets ts JOIN training_projection_state ps ON ps.account_id=ts.account_id JOIN account_state ast ON ast.account_id=ts.account_id AND ast.revision=ps.source_revision WHERE (ts.account_id,ts.workout_id) IN (SELECT json_extract(value,'$.accountId'),json_extract(value,'$.workoutId') FROM json_each(?)) ORDER BY ts.account_id,ts.workout_id,ts.exercise_instance_id",
+      )
+        .bind(
+          JSON.stringify(
+            page.map((row) => ({ accountId: row.accountId, workoutId: row.workoutId })),
+          ),
+        )
+        .all<{
+          accountId: string;
+          workoutId: string;
+          exerciseInstanceId: string;
+          exerciseId: string;
+          kind: string;
+        }>()
+    : { results: [] };
+  type FeedSet = (typeof sets.results)[number];
+  const setsByWorkout = new Map<string, FeedSet[]>();
+  for (const set of sets.results) {
+    const key = JSON.stringify([set.accountId, set.workoutId]);
+    if (!setsByWorkout.has(key)) setsByWorkout.set(key, []);
+    setsByWorkout.get(key)!.push(set);
+  }
+  for (const row of page) {
+    const workoutSets = setsByWorkout.get(JSON.stringify([row.accountId, row.workoutId])) || [];
+    const workingSets = workoutSets.filter((set) => set.kind === 'working');
+    const personalRecords = recordsByAccount.get(row.accountId);
+    if (!workingSets.length || !personalRecords) continue;
+    const names = [
+      ...new Map(workingSets.map((set) => [set.exerciseInstanceId, set])).values(),
+    ].slice(0, 2);
     items.push({
       id: row.id,
       profile: {
@@ -583,9 +697,9 @@ async function feedItems(
         0,
         Math.round((Date.parse(row.completedAt) - Date.parse(row.startedAt)) / 60000),
       ),
-      exerciseCount: summary.exerciseCount,
-      setCount: summary.setCount,
-      exerciseNames: names.results.map(
+      exerciseCount: new Set(workoutSets.map((set) => set.exerciseInstanceId)).size,
+      setCount: workingSets.length,
+      exerciseNames: names.map(
         (x) =>
           (personalRecords.revision === row.sourceRevision
             ? personalRecords.workoutExerciseNames.get(row.workoutId)?.get(x.exerciseInstanceId)
@@ -674,7 +788,7 @@ app.get('/api/community/profiles/:publicId', async (c) => {
   const permitted = sharedOnly
     ? ` AND vis.visibility='community' AND NOT EXISTS(SELECT 1 FROM account_blocks b WHERE (b.account_id=? AND b.blocked_account_id=tw.account_id) OR (b.account_id=tw.account_id AND b.blocked_account_id=?))`
     : '';
-  const base = `FROM training_sets ts JOIN training_workouts tw USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=tw.account_id AND ast.revision=ps.source_revision${visibility} WHERE ts.account_id=? AND ts.kind='working'${permitted}`;
+  const base = `FROM training_sets ts JOIN training_workouts tw USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision>=tw.source_revision JOIN account_state ast ON ast.account_id=tw.account_id AND ast.revision=ps.source_revision${visibility} WHERE ts.account_id=? AND ts.kind='working'${permitted}`;
   const params = sharedOnly
     ? [profile.accountId, c.get('accountId'), c.get('accountId')]
     : [profile.accountId];
@@ -755,14 +869,14 @@ app.get('/api/community/profiles/:publicId/workouts', async (c) => {
 });
 app.get('/api/community/workouts/:publicationId', async (c) => {
   const row = await c.env.DB.prepare(
-    "SELECT p.account_id accountId,p.workout_id workoutId,p.shared_title sharedTitle,p.activity_at activityAt,pr.public_id publicId,pr.display_name displayName,pr.training_timezone trainingTimezone,tw.started_at startedAt,tw.completed_at completedAt,tw.source_revision sourceRevision FROM workout_publications p JOIN workout_visibility v USING(account_id,workout_id) JOIN training_workouts tw USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=p.account_id AND ast.revision=ps.source_revision JOIN accounts a ON a.id=p.account_id AND a.status='active' JOIN profiles pr ON pr.account_id=p.account_id WHERE p.id=? AND v.visibility='community'",
+    "SELECT p.account_id accountId,p.workout_id workoutId,p.shared_title sharedTitle,p.activity_at activityAt,pr.public_id publicId,pr.display_name displayName,pr.training_timezone trainingTimezone,tw.started_at startedAt,tw.completed_at completedAt,ps.source_revision sourceRevision FROM workout_publications p JOIN workout_visibility v USING(account_id,workout_id) JOIN training_workouts tw USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision>=tw.source_revision JOIN account_state ast ON ast.account_id=p.account_id AND ast.revision=ps.source_revision JOIN accounts a ON a.id=p.account_id AND a.status='active' JOIN profiles pr ON pr.account_id=p.account_id WHERE p.id=? AND v.visibility='community'",
   )
     .bind(c.req.param('publicationId'))
     .first<Record<string, any>>();
   if (!row || (await mutualBlock(c.env, c.get('accountId'), row.accountId)))
     return c.json({ error: 'Workout unavailable.' }, 404);
   const sets = await c.env.DB.prepare(
-    'SELECT ts.set_id setId,ts.exercise_instance_id exerciseInstanceId,ts.exercise_id exerciseId,ts.load_mode loadMode,ts.weight_lb weight,ts.reps,ts.kind FROM training_sets ts JOIN training_projection_state ps ON ps.account_id=ts.account_id JOIN account_state ast ON ast.account_id=ts.account_id AND ast.revision=ps.source_revision JOIN training_workouts tw ON tw.account_id=ts.account_id AND tw.workout_id=ts.workout_id AND tw.source_revision=ps.source_revision WHERE ts.account_id=? AND ts.workout_id=? ORDER BY ts.exercise_instance_id,ts.completed_at',
+    'SELECT ts.set_id setId,ts.exercise_instance_id exerciseInstanceId,ts.exercise_id exerciseId,ts.load_mode loadMode,ts.weight_lb weight,ts.reps,ts.kind FROM training_sets ts JOIN training_projection_state ps ON ps.account_id=ts.account_id JOIN account_state ast ON ast.account_id=ts.account_id AND ast.revision=ps.source_revision JOIN training_workouts tw ON tw.account_id=ts.account_id AND tw.workout_id=ts.workout_id AND tw.source_revision<=ps.source_revision WHERE ts.account_id=? AND ts.workout_id=? ORDER BY ts.exercise_instance_id,ts.completed_at',
   )
     .bind(row.accountId, row.workoutId)
     .all<Record<string, any>>();
@@ -850,7 +964,7 @@ app.put('/api/me/workouts/:workoutId/visibility', async (c) => {
   if (body.visibility === 'community' && !body.audienceAcknowledged)
     return c.json({ error: 'Community audience acknowledgement is required.' }, 400);
   const count = await c.env.DB.prepare(
-    "SELECT COUNT(*) count FROM training_sets ts JOIN training_workouts tw USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=tw.account_id AND ast.revision=ps.source_revision WHERE ts.account_id=? AND ts.workout_id=? AND ts.kind='working'",
+    "SELECT COUNT(*) count FROM training_sets ts JOIN training_workouts tw USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision>=tw.source_revision JOIN account_state ast ON ast.account_id=tw.account_id AND ast.revision=ps.source_revision WHERE ts.account_id=? AND ts.workout_id=? AND ts.kind='working'",
   )
     .bind(a, id)
     .first<{ count: number }>();
@@ -871,7 +985,7 @@ app.put('/api/me/workouts/:workoutId/visibility', async (c) => {
     const state = await readState(c.env, a);
     const title = state.data.workouts.find((workout) => workout.id === id)?.name || 'Workout';
     await c.env.DB.prepare(
-      "INSERT INTO workout_publications(account_id,workout_id,id,activity_at,published_at,shared_title) SELECT tw.account_id,tw.workout_id,?,tw.completed_at,?,? FROM training_workouts tw JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision=tw.source_revision JOIN account_state ast ON ast.account_id=tw.account_id AND ast.revision=ps.source_revision JOIN workout_visibility v USING(account_id,workout_id) WHERE tw.account_id=? AND tw.workout_id=? AND v.visibility='community' AND v.decision_revision=? AND EXISTS(SELECT 1 FROM training_sets ts WHERE ts.account_id=tw.account_id AND ts.workout_id=tw.workout_id AND ts.kind='working') ON CONFLICT(account_id,workout_id) DO UPDATE SET shared_title=excluded.shared_title",
+      "INSERT INTO workout_publications(account_id,workout_id,id,activity_at,published_at,shared_title) SELECT tw.account_id,tw.workout_id,?,tw.completed_at,?,? FROM training_workouts tw JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision>=tw.source_revision JOIN account_state ast ON ast.account_id=tw.account_id AND ast.revision=ps.source_revision JOIN workout_visibility v USING(account_id,workout_id) WHERE tw.account_id=? AND tw.workout_id=? AND v.visibility='community' AND v.decision_revision=? AND EXISTS(SELECT 1 FROM training_sets ts WHERE ts.account_id=tw.account_id AND ts.workout_id=tw.workout_id AND ts.kind='working') ON CONFLICT(account_id,workout_id) DO UPDATE SET shared_title=excluded.shared_title WHERE workout_publications.shared_title IS NOT excluded.shared_title",
     )
       .bind(crypto.randomUUID(), now, title, a, id, decision)
       .run();
@@ -1023,7 +1137,9 @@ app.put('/api/state', async (c) => {
     request.data && typeof request.data === 'object'
       ? (request.data as { schemaVersion?: unknown }).schemaVersion
       : undefined;
-  const currentVersion = await storedSchemaVersion(c.env, accountId);
+  const rawSaved = await readRawState(c.env, accountId);
+  const storedVersion = (rawSaved?.data as { schemaVersion?: unknown } | null)?.schemaVersion;
+  const currentVersion = typeof storedVersion === 'number' ? storedVersion : 0;
   if (currentVersion > 1 && incomingVersion === 1)
     return c.json(
       {
@@ -1036,19 +1152,40 @@ app.put('/api/state', async (c) => {
     );
   // Validate/migrate only after the raw persisted version guard, so a newer
   // unsupported server schema produces a clear upgrade response without writes.
-  await readState(c.env, accountId);
+  const saved = rawSaved
+    ? { data: validateBackup(rawSaved.data), revision: rawSaved.revision }
+    : await readState(c.env, accountId);
+  // Active sessions, routines, preferences and chat are not finished training.
+  // Compare validated snapshots before touching any training projection rows.
+  const trainingUnchanged =
+    !request.restore &&
+    saved.revision === request.baseRevision &&
+    JSON.stringify(saved.data.workouts.filter((workout) => workout.status === 'finished')) ===
+      JSON.stringify(data.workouts.filter((workout) => workout.status === 'finished'));
   const now = new Date().toISOString();
   const chunks = splitState(JSON.stringify(data));
+  // The receipt check above is only a fast path. A competing request may commit
+  // this operation before our batch starts, so enforce immutability in SQL too.
+  const unreceiptedOperation =
+    'NOT EXISTS (SELECT 1 FROM sync_receipts WHERE account_id=account_state.account_id AND operation_id=account_state.last_operation_id)';
   await c.env.DB.batch([
     c.env.DB.prepare(
-      'UPDATE account_state SET payload = ?, revision = revision + 1, updated_at = ?, device_id = ?, last_operation_id = ? WHERE account_id = ? AND revision = ?',
-    ).bind('', now, request.deviceId, request.operationId, accountId, request.baseRevision),
+      'UPDATE account_state SET payload = ?, revision = revision + 1, updated_at = ?, device_id = ?, last_operation_id = ? WHERE account_id = ? AND revision = ? AND NOT EXISTS (SELECT 1 FROM sync_receipts WHERE account_id=account_state.account_id AND operation_id=?)',
+    ).bind(
+      '',
+      now,
+      request.deviceId,
+      request.operationId,
+      accountId,
+      request.baseRevision,
+      request.operationId,
+    ),
     c.env.DB.prepare(
-      'DELETE FROM state_chunks WHERE account_id = ? AND EXISTS (SELECT 1 FROM account_state WHERE account_id = ? AND last_operation_id = ?)',
-    ).bind(accountId, accountId, request.operationId),
+      `DELETE FROM state_chunks WHERE account_id = ? AND chunk_index >= ? AND EXISTS (SELECT 1 FROM account_state WHERE account_id = ? AND last_operation_id = ? AND ${unreceiptedOperation})`,
+    ).bind(accountId, chunks.length, accountId, request.operationId),
     ...chunks.map((content, index) =>
       c.env.DB.prepare(
-        'INSERT INTO state_chunks (account_id, chunk_index, content) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM account_state WHERE account_id = ? AND last_operation_id = ?)',
+        `INSERT INTO state_chunks (account_id, chunk_index, content) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM account_state WHERE account_id = ? AND last_operation_id = ? AND ${unreceiptedOperation}) ON CONFLICT(account_id,chunk_index) DO UPDATE SET content=excluded.content WHERE state_chunks.content IS NOT excluded.content`,
       ).bind(accountId, index, content, accountId, request.operationId),
     ),
     c.env.DB.prepare(
@@ -1063,6 +1200,17 @@ app.put('/api/state', async (c) => {
   if (!receipt) return c.json(await readState(c.env, accountId), 409);
   if (receipt.fingerprint !== fingerprint)
     return c.json({ error: 'An operation identifier was reused for different content.' }, 400);
+  if (trainingUnchanged) {
+    // Certify the existing projection for the new account revision. Keeping
+    // this guard exact preserves fail-closed reads if an earlier build failed
+    // or another request advanced the account while this sync was in flight.
+    const advanced = await c.env.DB.prepare(
+      'UPDATE training_projection_state SET source_revision=?,built_at=? WHERE account_id=? AND source_revision=? AND EXISTS(SELECT 1 FROM account_state WHERE account_id=? AND revision=?)',
+    )
+      .bind(receipt.revision, now, accountId, request.baseRevision, accountId, receipt.revision)
+      .run();
+    if (advanced.meta.changes) return c.json({ revision: receipt.revision });
+  }
   await rebuildProjection(c.env, accountId, receipt.revision, data, !!request.restore);
   return c.json({ revision: receipt.revision });
 });

@@ -4,6 +4,9 @@
 /manifest.webmanifest
   Cache-Control: no-cache
 
+/assets/*
+  Cache-Control: private, max-age=31536000, immutable
+
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: same-origin
