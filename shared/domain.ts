@@ -440,6 +440,52 @@ export function updateSet(
     ),
   };
 }
+export function removeWorkoutSet(
+  data: AppData,
+  workoutId: string,
+  exerciseId: string,
+  setId: string,
+): AppData {
+  const workout = data.workouts.find((item) => item.id === workoutId);
+  assert(workout?.status === 'active', 'Workout is not active');
+  const exact = workout.exercises.find((item) => item.id === exerciseId);
+  const matches = exact
+    ? [exact]
+    : workout.exercises.filter((item) => item.exerciseId === exerciseId);
+  assert(matches.length === 1, 'Workout exercise target is missing or ambiguous');
+  const exercise = matches[0];
+  const set = exercise.actualSets.find((item) => item.id === setId);
+  assert(set, 'Set not found');
+  const latestCompleted = workout.exercises
+    .flatMap((item) => item.actualSets)
+    .filter((item) => item.status === 'completed' && item.completedAt)
+    .sort((a, b) => Date.parse(b.completedAt!) - Date.parse(a.completedAt!))[0];
+  const clearsRest =
+    workout.restSetId === setId ||
+    (!workout.restSetId && set.status === 'completed' && latestCompleted?.id === setId);
+  return {
+    ...data,
+    workouts: data.workouts.map((item) =>
+      item !== workout
+        ? item
+        : {
+            ...item,
+            updatedAt: now(),
+            restEndsAt: clearsRest ? undefined : item.restEndsAt,
+            restSetId: clearsRest ? undefined : item.restSetId,
+            exercises: item.exercises.map((entry) =>
+              entry !== exercise
+                ? entry
+                : {
+                    ...entry,
+                    actualSets: entry.actualSets.filter((item) => item.id !== setId),
+                  },
+            ),
+          },
+    ),
+  };
+}
+
 export function addWorkoutSet(
   data: AppData,
   workoutId: string,

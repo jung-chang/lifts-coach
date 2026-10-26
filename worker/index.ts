@@ -1278,7 +1278,10 @@ app.post('/api/coach/chat', async (c) => {
 app.notFound((c) => c.json({ error: 'Unknown API endpoint.' }, 404));
 app.onError((error, c) => {
   if (error instanceof CoachError)
-    return c.json({ error: error.message, code: error.code }, error.status);
+    return c.json(
+      { error: error.message, code: error.code, diagnosticId: error.diagnosticId },
+      error.status,
+    );
   if (
     error instanceof z.ZodError ||
     error instanceof SyntaxError ||

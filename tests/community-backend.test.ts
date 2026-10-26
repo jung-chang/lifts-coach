@@ -314,10 +314,11 @@ describe('community backend authorization and publication', () => {
         [0],
       );
       expect(approved.routines[0]).toMatchObject({
-        id: routine.id,
+        id: result.proposals[0].routineDraft.id,
         name: routine.name,
-        exercises: routine.exercises,
+        exercises: routine.exercises.map(({ id: _id, ...exercise }) => exercise),
       });
+      expect(approved.routines[0].id).not.toBe(routine.id);
       const saved = await call(db, member, '/api/state', 'PUT', {
         accountId: session.accountId,
         operationId: 'save-ai-routine',

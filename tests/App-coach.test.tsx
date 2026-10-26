@@ -154,10 +154,17 @@ it('shows the server provider error instead of claiming no provider is configure
   await screen.findByText('The Coach provider rejected its credentials.');
 });
 
-it('reviews an AI routine in the shared editor and persists it only after Save', async () => {
+it('reviews the requested three-exercise routine and persists its prescriptions only after Save', async () => {
   const routine = {
     ...createRoutine('Synthetic AI plan'),
-    exercises: [createPrescription(catalog[0].id)],
+    exercises: ['ex_pull-up', 'ex_dumbbell-bench', 'ex_dumbbell-shoulder-press'].map(
+      (exerciseId, index) => ({
+        ...createPrescription(exerciseId),
+        sets: 3,
+        repRange: [3, 3] as [number, number],
+        targetWeight: index === 0 ? 0 : 50,
+      }),
+    ),
   };
   const proposal: Proposal = {
     id: 'synthetic-routine-proposal',
@@ -183,7 +190,10 @@ it('reviews an AI routine in the shared editor and persists it only after Save',
   fireEvent.click(screen.getByRole('button', { name: 'Ask Coach' }));
   await waitFor(() => expect(vi.mocked(fetch).mock.calls.length).toBeGreaterThan(0));
   fireEvent.change(screen.getByRole('textbox', { name: 'Message Coach' }), {
-    target: { value: 'Create a routine for me' },
+    target: {
+      value:
+        'Help me create a routine with three exercises pull-ups the dumbbell bench press and dumbbell shoulder press each three sets three reps pull-ups is bodyweight and the others are 50 pound dumbbells',
+    },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
   await screen.findByText('Review this routine.');
@@ -193,6 +203,6 @@ it('reviews an AI routine in the shared editor and persists it only after Save',
   expect(fixture.data.routines).toEqual([]);
   fireEvent.click(screen.getByRole('button', { name: 'Approve and save' }));
   await waitFor(() => expect(fixture.data.routines[0]?.name).toBe(routine.name));
-  expect(fixture.data.routines[0].exercises[0].exerciseId).toBe(catalog[0].id);
+  expect(fixture.data.routines[0].exercises).toEqual(routine.exercises);
   expect(fixture.data.proposals[0].status).toBe('accepted');
 });

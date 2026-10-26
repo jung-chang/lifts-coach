@@ -11,9 +11,65 @@ function getExercise() {
   return startWorkout({ ...emptyData(), routines: [routine] }, routine.id).workouts[0].exercises[0];
 }
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 describe('SetTable input drafts', () => {
+  it('reveals deletion for the swiped row, ignores vertical movement and keeps edits separate', () => {
+    vi.stubGlobal('PointerEvent', MouseEvent);
+    const exercise = getExercise(),
+      onRemove = vi.fn(),
+      onDone = vi.fn();
+    render(
+      <SetTable
+        exercise={exercise}
+        unit="lb"
+        onEdit={vi.fn()}
+        onDone={onDone}
+        onRemove={onRemove}
+      />,
+    );
+    const row = screen.getByRole('row', { name: 'Set 2 actions' });
+    fireEvent.pointerDown(row, { button: 0, clientX: 200, clientY: 100 });
+    fireEvent.pointerMove(row, { clientX: 190, clientY: 170 });
+    fireEvent.pointerUp(row);
+    expect(screen.queryByRole('button', { name: 'Delete set 2' })).toBeNull();
+    fireEvent.pointerDown(row, { button: 0, clientX: 200, clientY: 100 });
+    fireEvent.pointerMove(row, { clientX: 120, clientY: 103 });
+    fireEvent.pointerUp(row);
+    expect(onRemove).not.toHaveBeenCalled();
+    expect(onDone).not.toHaveBeenCalled();
+    const action = screen.getByRole('button', { name: 'Delete set 2' });
+    fireEvent.pointerDown(action, { button: 0, clientX: 250, clientY: 100 });
+    fireEvent.click(action);
+    expect(onRemove).toHaveBeenCalledWith(exercise.actualSets[1].id);
+  });
+
+  it('supports keyboard deletion without treating Delete inside a load input as a row action', () => {
+    const exercise = getExercise(),
+      onRemove = vi.fn();
+    render(
+      <SetTable
+        exercise={exercise}
+        unit="lb"
+        onEdit={vi.fn()}
+        onDone={vi.fn()}
+        onRemove={onRemove}
+      />,
+    );
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Set 1 load' }), { key: 'Delete' });
+    expect(onRemove).not.toHaveBeenCalled();
+    const row = screen.getByRole('row', { name: 'Set 1 actions' });
+    fireEvent.focus(row);
+    expect(screen.getByRole('button', { name: 'Delete set 1' })).toBeTruthy();
+    fireEvent.keyDown(row, { key: 'Escape' });
+    expect(screen.queryByRole('button', { name: 'Delete set 1' })).toBeNull();
+    fireEvent.keyDown(row, { key: 'Delete' });
+    expect(onRemove).toHaveBeenCalledWith(exercise.actualSets[0].id);
+  });
+
   it('keeps added-weight and assistance selection available directly in bodyweight rows', () => {
     const source = getExercise();
     const exercise = {

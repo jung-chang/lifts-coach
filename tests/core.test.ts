@@ -15,6 +15,7 @@ import {
   progressionProposals,
   proposalFingerprint,
   repeatWorkout,
+  removeWorkoutSet,
   replaceWorkoutExercise,
   scheduleEdit,
   setDone,
@@ -33,6 +34,36 @@ const base = () => {
 };
 
 describe('core domain invariants', () => {
+  it('removes only the targeted active snapshot set and clears only its rest timer', () => {
+    let data = base();
+    data = startWorkout(data, data.routines[0].id);
+    const workout = data.workouts[0],
+      exercise = workout.exercises[0];
+    const first = exercise.actualSets[0].id,
+      last = exercise.actualSets.at(-1)!.id;
+    data = completeSet(data, workout.id, exercise.id, first);
+    const before = structuredClone(data);
+    const removed = removeWorkoutSet(data, workout.id, exercise.id, last);
+    expect(removed.routines).toEqual(before.routines);
+    expect(removed.workouts[0].exercises[0].actualSets).toEqual(
+      before.workouts[0].exercises[0].actualSets.filter((set) => set.id !== last),
+    );
+    expect(removed.workouts[0].restEndsAt).toBe(before.workouts[0].restEndsAt);
+    expect(validateBackup(removed)).toEqual(removed);
+    const noTimer = removeWorkoutSet(removed, workout.id, exercise.id, first);
+    expect(noTimer.workouts[0].restEndsAt).toBeUndefined();
+    expect(noTimer.workouts[0].restSetId).toBeUndefined();
+    expect(validateBackup(noTimer)).toEqual(noTimer);
+    expect(data).toEqual(before);
+    const finished = finishWorkout(data, workout.id);
+    expect(() => removeWorkoutSet(finished, workout.id, exercise.id, last)).toThrow(
+      'Workout is not active',
+    );
+    expect(() => removeWorkoutSet(data, workout.id, exercise.id, 'missing')).toThrow(
+      'Set not found',
+    );
+  });
+
   it('changes only the requested workout prescription fields without resetting entered or warmup values', () => {
     let data = base();
     data = startWorkout(data, data.routines[0].id);

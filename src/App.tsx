@@ -29,6 +29,7 @@ import {
   repeatWorkout,
   setDone,
   addWorkoutSet,
+  removeWorkoutSet,
   updateSet,
   finishWorkout,
   discardWorkout,
@@ -44,7 +45,6 @@ import {
   updateWorkoutFeedback,
   previousExerciseNote,
   previousWorkoutNote,
-  updatePersistentExerciseNote,
 } from '../shared/domain';
 import { catalog } from '../shared/catalog';
 import { coachSelection } from '../shared/coachSelection';
@@ -1146,11 +1146,7 @@ function App() {
                   requestDiscard={() => setDiscardWorkoutRequested(workout!.id)}
                   say={say}
                   mutate={mutate}
-                  savePersistentNote={(exerciseId: string, note: string) =>
-                    safeUpdate((d) =>
-                      updatePersistentExerciseNote(d, exerciseId, note, workout!.id),
-                    )
-                  }
+                  undoRemoveSet={undo?.label === 'Set removed for today' ? undoLast : undefined}
                   saveFeedback={(
                     feedback: {
                       notes?: string;
@@ -1848,8 +1844,8 @@ function WorkoutScreen({
   requestDiscard,
   say,
   mutate,
+  undoRemoveSet,
   saveFeedback,
-  savePersistentNote,
 }: any) {
   const [replacementOpen, setReplacementOpen] = useState(false);
   const [customName, setCustomName] = useState<string | null>(null);
@@ -2048,16 +2044,20 @@ function WorkoutScreen({
               )}
               <PersistentExerciseNote
                 key={`${workout.id}:${ex.id}:instructions`}
-                name={ex.name}
                 snapshotNote={ex.persistentNote}
-                personalNote={data.exerciseSettings?.[ex.exerciseId]?.persistentNote}
-                onSave={(note) => savePersistentNote(ex.exerciseId, note)}
               />
               <SetTable
                 exercise={ex}
                 unit={unit}
+                onUndoRemove={undoRemoveSet}
                 onEdit={(set, patch) => editSet(ex.id, set, patch)}
                 onDone={(setId, done, patch) => toggleDone(ex.id, setId, done, patch)}
+                onRemove={(setId) =>
+                  mutate(
+                    (d: AppData) => removeWorkoutSet(d, workout.id, ex.id, setId),
+                    'Set removed for today',
+                  )
+                }
                 onAdd={() =>
                   mutate(
                     (d: AppData) => addWorkoutSet(d, workout.id, ex.id, 'working'),

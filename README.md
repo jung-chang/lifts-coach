@@ -8,18 +8,16 @@ The current interface follows the owner's Maia/Olive/Yellow redesign request, wi
 
 ## Development
 
+For Cloudflare debugging, use the [reproduction and verification loop](docs/cloudflare-debugging.md). `pnpm cloudflare:verify:remote --deployed-baseline` tests the deployed Coach code with synthetic context in a temporary preview; `pnpm cloudflare:verify:remote` checks the local fix using server-held model secrets. `pnpm cloudflare:verify` runs tests, build, public checks and isolated local Worker/D1 verification.
+
 Use Node 24+ and pnpm 10.33.0:
 
 ```sh
 pnpm install
-pnpm test
-pnpm build
-cp .dev.vars.example .dev.vars
-pnpm db:migrate:local
-pnpm worker:dev
-# In a second terminal, Vite proxies /api to localhost:8787:
-pnpm dev
+pnpm dev:local
 ```
+
+Open the printed localhost URL. This builds the UI, applies local database migrations and starts the app without deploying. Data persists under ignored `output/local-app/state`. Stop with Ctrl+C; restart after frontend edits. No Cloudflare login is needed. For real local Coach replies, configure a provider key in the ignored `.dev.vars` using `.dev.vars.example` as a guide before starting. Without a key, workout logging and routine editing still work.
 
 `LOCAL_DEV=true` bypasses authentication only for loopback URLs. The backend fails closed without a valid Access JWT on deployed hosts. The plain Vite UI can log workouts without a running API; it displays a local sync status and Coach remains unavailable until synchronization succeeds.
 

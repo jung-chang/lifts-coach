@@ -2383,6 +2383,9 @@ summary {
   cursor: pointer;
   border-radius: 12px;
 }
+.set-delete-action {
+  color: var(--red);
+}
 .set-done-control input {
   width: 20px;
   height: 20px;

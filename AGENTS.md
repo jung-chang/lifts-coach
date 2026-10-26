@@ -33,6 +33,8 @@ Preserve separate routine and workout snapshots. AI cannot silently mutate progr
 
 ## Verification and deployment
 
+For every Cloudflare debugging task, follow `docs/cloudflare-debugging.md`: establish the environment/revision and observe a safe baseline, make a focused fix, rerun the reproduction, then run `pnpm cloudflare:verify`. For Coach/provider changes, use `pnpm cloudflare:verify:remote --deployed-baseline` and `pnpm cloudflare:verify:remote` with the existing Wrangler login. These temporary synthetic previews have no production database binding and must verify the active production deployment is unchanged. Use supported credential retrieval, never dump credentials or private logs, and do not repeatedly ask the owner to copy logs or provision local keys when the preview path works. Record blocked prerequisites and distinguish mocked, local, preview and deployed verification. A passing baseline means the original failure remains unreproduced; do not claim a speculative fix resolved it.
+
 Run the pinned Node/pnpm toolchain, `pnpm test` and `pnpm build` before publishing changes. Test important scope, timer, backup and offline-sync behaviors. Verify meaningful UI changes at phone and desktop sizes. Never reformat the protected spec while formatting other files.
 
 Deploy from successful pushes to `main` through GitHub Actions only when account, D1 and Access configuration and deployment secrets are provisioned. Keep preview resources isolated from production. Protect personal deployments with an owner-restricted Cloudflare Access policy, and keep backend authentication fail-closed. Do not claim real deployment, phone installation or live-provider validation unless actually observed.

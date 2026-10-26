@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Plus } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Plus, Trash2 } from 'lucide-react';
 import { Button } from './ui/Button';
 import { fromDisplayWeight, toDisplayWeight } from '../../shared/domain';
 import type { WorkoutExercise, WorkoutSet } from '../../shared/types';
@@ -15,6 +15,8 @@ type Props = {
   onEdit: (set: WorkoutSet, patch: Partial<WorkoutSet>) => void;
   onDone: (setId: string, done: boolean, patch?: Partial<WorkoutSet>) => void;
   onAdd?: () => void;
+  onRemove?: (setId: string) => void;
+  onUndoRemove?: () => void;
 };
 
 function parseInput(field: Field, value: string, unit: Unit): number | null {
@@ -29,10 +31,13 @@ function parseInput(field: Field, value: string, unit: Unit): number | null {
   }
 }
 
-export function SetTable({ exercise, unit, onEdit, onDone, onAdd }: Props) {
+export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove, onUndoRemove }: Props) {
   // Persisted values come directly from props. Only actual input edits enter
   // this buffer; an acknowledged edit therefore cannot mask later Undo/sync.
   const [drafts, setDrafts] = useState<Drafts>({});
+  const [deleteRow, setDeleteRow] = useState<string | null>(null);
+  const gesture = useRef<{ id: string; x: number; y: number } | null>(null);
+  const swiped = useRef(false);
   useEffect(() => {
     const focusedKey = document.activeElement?.getAttribute('data-set-input');
     setDrafts((old) => {
@@ -152,6 +157,50 @@ export function SetTable({ exercise, unit, onEdit, onDone, onAdd }: Props) {
             return (
               <tr
                 key={set.id}
+                tabIndex={onRemove ? 0 : undefined}
+                aria-label={onRemove ? `Set ${ordinal} actions` : undefined}
+                style={onRemove ? { touchAction: 'pan-y' } : undefined}
+                onFocus={(event) => {
+                  if (onRemove && event.target === event.currentTarget) setDeleteRow(set.id);
+                }}
+                onKeyDown={(event) => {
+                  if (onRemove && event.target === event.currentTarget && event.key === 'Delete') {
+                    event.preventDefault();
+                    onRemove(set.id);
+                    setDeleteRow(null);
+                  }
+                  if (event.key === 'Escape') setDeleteRow(null);
+                }}
+                onPointerDown={(event) => {
+                  if (!onRemove || event.button !== 0) return;
+                  swiped.current = false;
+                  gesture.current = { id: set.id, x: event.clientX, y: event.clientY };
+                }}
+                onPointerMove={(event) => {
+                  const start = gesture.current;
+                  if (!start || start.id !== set.id) return;
+                  const dx = event.clientX - start.x,
+                    dy = event.clientY - start.y;
+                  if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) {
+                    gesture.current = null;
+                  } else if (Math.abs(dx) > 24 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+                    swiped.current = true;
+                    event.preventDefault();
+                    setDeleteRow(dx < 0 ? set.id : null);
+                  }
+                }}
+                onPointerUp={() => {
+                  gesture.current = null;
+                }}
+                onPointerCancel={() => {
+                  gesture.current = null;
+                }}
+                onClickCapture={(event) => {
+                  if (swiped.current && event.detail > 0) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                  }
+                }}
                 className={
                   set.status === 'completed'
                     ? 'set-row-completed'
@@ -219,32 +268,55 @@ export function SetTable({ exercise, unit, onEdit, onDone, onAdd }: Props) {
                   />
                 </td>
                 <td className="tablecoldone">
-                  <label className="set-done-control" aria-label={`Set ${ordinal} done`}>
-                    <input
-                      aria-label={`Set ${ordinal} done`}
-                      type="checkbox"
-                      disabled={invalid && set.status !== 'completed'}
-                      checked={set.status === 'completed'}
-                      onChange={(event) => done(event.target.checked)}
-                    />
-                  </label>
+                  {onRemove && deleteRow === set.id ? (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="set-delete-action"
+                      aria-label={`Delete set ${ordinal}`}
+                      title="Delete set for today"
+                      onClick={() => {
+                        onRemove(set.id);
+                        setDeleteRow(null);
+                      }}
+                    >
+                      <Trash2 size={18} aria-hidden="true" />
+                    </Button>
+                  ) : (
+                    <label className="set-done-control" aria-label={`Set ${ordinal} done`}>
+                      <input
+                        aria-label={`Set ${ordinal} done`}
+                        type="checkbox"
+                        disabled={invalid && set.status !== 'completed'}
+                        checked={set.status === 'completed'}
+                        onChange={(event) => done(event.target.checked)}
+                      />
+                    </label>
+                  )}
                 </td>
               </tr>
             );
           })}
         </tbody>
-        {onAdd && (
+        {(onAdd || onRemove || onUndoRemove) && (
           <tfoot>
             <tr>
               <td colSpan={4}>
-                <Button
-                  variant="ghost"
-                  aria-label="Add set"
-                  title="Add set for today"
-                  onClick={onAdd}
-                >
-                  <Plus size={18} aria-hidden="true" />
-                </Button>
+                {onUndoRemove && (
+                  <Button variant="ghost" onClick={onUndoRemove}>
+                    Undo
+                  </Button>
+                )}
+                {onAdd && (
+                  <Button
+                    variant="ghost"
+                    aria-label="Add set"
+                    title="Add set for today"
+                    onClick={onAdd}
+                  >
+                    <Plus size={18} aria-hidden="true" />
+                  </Button>
+                )}
               </td>
             </tr>
           </tfoot>

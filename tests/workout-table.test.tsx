@@ -52,7 +52,35 @@ async function beginWorkout() {
 }
 
 describe('workout set table', () => {
-  it('shows persistent instructions and edits them separately from session feedback', async () => {
+  it('removes sets for today with Undo and preserves the routine across reload', async () => {
+    await beginWorkout();
+    const routines = structuredClone(fixture.data.routines);
+    const original = structuredClone(fixture.data.workouts[0].exercises[0].actualSets);
+    const remove = (ordinal: number) => {
+      fireEvent.focus(screen.getByRole('row', { name: `Set ${ordinal} actions` }));
+      fireEvent.click(screen.getByRole('button', { name: `Delete set ${ordinal}` }));
+    };
+    remove(3);
+    await waitFor(() => expect(fixture.data.workouts[0].exercises[0].actualSets).toHaveLength(2));
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(fixture.data.workouts[0].exercises[0].actualSets).toEqual(original));
+    remove(3);
+    await waitFor(() => expect(fixture.data.workouts[0].exercises[0].actualSets).toHaveLength(2));
+    cleanup();
+    render(<App />);
+    expect(screen.queryByRole('textbox', { name: 'Set 3 reps' })).toBeNull();
+    expect(fixture.data.routines).toEqual(routines);
+    remove(2);
+    await waitFor(() => expect(fixture.data.workouts[0].exercises[0].actualSets).toHaveLength(1));
+    remove(1);
+    await waitFor(() => expect(fixture.data.workouts[0].exercises[0].actualSets).toHaveLength(0));
+    expect(screen.queryByRole('button', { name: /Delete set/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Add set' }));
+    await waitFor(() => expect(fixture.data.workouts[0].exercises[0].actualSets).toHaveLength(1));
+    expect(fixture.data.routines).toEqual(routines);
+  });
+
+  it('shows captured instructions read-only during training', async () => {
     const exerciseId = fixture.data.routines[0].exercises[0].exerciseId;
     fixture.data.exerciseSettings = {
       [exerciseId]: {
@@ -67,17 +95,16 @@ describe('workout set table', () => {
     expect(
       fixture.data.workouts[0].exercises[0].actualSets.map((set: { weight: number }) => set.weight),
     ).toEqual([45, 45, 45]);
-    fireEvent.click(screen.getByRole('button', { name: 'Edit exercise instructions' }));
-    fireEvent.change(screen.getByRole('textbox', { name: /Exercise instructions for/ }), {
-      target: { value: 'Updated synthetic instructions' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Save instructions' }));
-    await waitFor(() =>
-      expect(fixture.data.exerciseSettings[exerciseId].persistentNote).toBe(
-        'Updated synthetic instructions',
-      ),
-    );
+    expect(screen.queryByRole('button', { name: 'Edit exercise instructions' })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: /Exercise instructions for/ })).toBeNull();
     expect(fixture.data.workouts[0].exercises[0].notes).toBeUndefined();
+  });
+  it('hides the instruction section entirely when starting without instructions', async () => {
+    await beginWorkout();
+    expect(screen.queryByRole('region', { name: 'Saved exercise instructions' })).toBeNull();
+    expect(screen.queryByText('Exercise instructions')).toBeNull();
+    expect(screen.queryByText('Add cues, pauses or set instructions.')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Edit exercise instructions' })).toBeNull();
   });
   it('creates a missing replacement, preserves completed sets, and keeps it after reopening', async () => {
     await beginWorkout();
