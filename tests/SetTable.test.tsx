@@ -17,6 +17,129 @@ afterEach(() => {
 });
 
 describe('SetTable input drafts', () => {
+  it('tracks a swipe, keeps Done present, snaps open, and closes on a right swipe or outside tap', () => {
+    vi.stubGlobal('PointerEvent', MouseEvent);
+    const onRemove = vi.fn();
+    render(
+      <SetTable
+        exercise={getExercise()}
+        unit="lb"
+        onEdit={vi.fn()}
+        onDone={vi.fn()}
+        onRemove={onRemove}
+      />,
+    );
+    const row = screen.getByRole('row', { name: 'Set 1 actions' });
+    const swipe = (from: number, to: number) => {
+      fireEvent.pointerDown(row, { button: 0, clientX: from, clientY: 100 });
+      fireEvent.pointerMove(row, { clientX: to, clientY: 100 });
+    };
+    swipe(200, 140);
+    expect(row.style.getPropertyValue('--set-offset')).toBe('-60px');
+    expect(screen.getByRole('checkbox', { name: 'Set 1 done' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Delete set 1' })).toBeNull();
+    fireEvent.pointerUp(row);
+    expect(row.style.getPropertyValue('--set-offset')).toBe('-80px');
+    expect(screen.getByRole('button', { name: 'Delete set 1' })).toBeTruthy();
+    swipe(100, 165);
+    fireEvent.pointerUp(row);
+    expect(row.style.getPropertyValue('--set-offset')).toBe('0px');
+    swipe(200, 20);
+    fireEvent.pointerUp(row);
+    expect(onRemove).not.toHaveBeenCalled();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('button', { name: 'Delete set 1' })).toBeNull();
+  });
+
+  it('keeps checkbox taps and input drags independent from deletion', () => {
+    vi.stubGlobal('PointerEvent', MouseEvent);
+    const onDone = vi.fn(),
+      onRemove = vi.fn();
+    render(
+      <SetTable
+        exercise={getExercise()}
+        unit="lb"
+        onEdit={vi.fn()}
+        onDone={onDone}
+        onRemove={onRemove}
+      />,
+    );
+    const checkbox = screen.getByRole('checkbox', { name: 'Set 1 done' });
+    const label = checkbox.closest('label')!;
+    for (const control of [
+      checkbox,
+      label,
+      screen.getByRole('textbox', { name: 'Set 1 load' }),
+      screen.getByRole('textbox', { name: 'Set 1 reps' }),
+    ]) {
+      fireEvent.pointerDown(control, { button: 0, clientX: 200, clientY: 100 });
+      fireEvent.pointerMove(control, {
+        clientX: control === checkbox || control === label ? 192 : 100,
+        clientY: 101,
+      });
+      fireEvent.pointerUp(control);
+      expect(screen.queryByRole('button', { name: /Delete set/ })).toBeNull();
+    }
+    fireEvent.click(label);
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(onRemove).not.toHaveBeenCalled();
+  });
+
+  it('reveals Delete from a deliberate Done drag without completing or deleting the set', () => {
+    vi.stubGlobal('PointerEvent', MouseEvent);
+    const onDone = vi.fn(),
+      onRemove = vi.fn();
+    render(
+      <SetTable
+        exercise={getExercise()}
+        unit="lb"
+        onEdit={vi.fn()}
+        onDone={onDone}
+        onRemove={onRemove}
+      />,
+    );
+    const checkbox = screen.getByRole('checkbox', { name: 'Set 1 done' });
+    fireEvent.pointerDown(checkbox, { button: 0, clientX: 250, clientY: 100 });
+    fireEvent.pointerMove(checkbox, { clientX: 170, clientY: 101 });
+    fireEvent.lostPointerCapture(checkbox);
+    fireEvent.pointerUp(checkbox);
+    fireEvent.click(checkbox, { detail: 1 });
+    expect(onDone).not.toHaveBeenCalled();
+    expect(onRemove).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Delete set 1' })).toBeTruthy();
+  });
+
+  it('requires a finished deliberate swipe and ignores pointer focus, jitter, scrolling and cancellation', () => {
+    vi.stubGlobal('PointerEvent', MouseEvent);
+    render(
+      <SetTable
+        exercise={getExercise()}
+        unit="lb"
+        onEdit={vi.fn()}
+        onDone={vi.fn()}
+        onRemove={vi.fn()}
+      />,
+    );
+    const row = screen.getByRole('row', { name: 'Set 1 actions' });
+    fireEvent.pointerDown(row, { button: 0, clientX: 200, clientY: 100 });
+    fireEvent.focus(row);
+    expect(screen.queryByRole('button', { name: /Delete set/ })).toBeNull();
+    fireEvent.pointerMove(row, { clientX: 170, clientY: 101 });
+    fireEvent.pointerUp(row);
+    expect(screen.queryByRole('button', { name: /Delete set/ })).toBeNull();
+    fireEvent.pointerDown(row, { button: 0, clientX: 200, clientY: 100 });
+    fireEvent.pointerMove(row, { clientX: 120, clientY: 101 });
+    expect(screen.queryByRole('button', { name: /Delete set/ })).toBeNull();
+    fireEvent.pointerCancel(row);
+    fireEvent.pointerUp(row);
+    expect(screen.queryByRole('button', { name: /Delete set/ })).toBeNull();
+    fireEvent.pointerDown(row, { button: 0, clientX: 200, clientY: 100 });
+    fireEvent.pointerMove(row, { clientX: 195, clientY: 115 });
+    fireEvent.pointerMove(row, { clientX: 100, clientY: 120 });
+    fireEvent.pointerUp(row);
+    expect(screen.queryByRole('button', { name: /Delete set/ })).toBeNull();
+  });
+
   it('reveals deletion for the swiped row, ignores vertical movement and keeps edits separate', () => {
     vi.stubGlobal('PointerEvent', MouseEvent);
     const exercise = getExercise(),

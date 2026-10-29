@@ -2386,6 +2386,70 @@ summary {
 .set-delete-action {
   color: var(--red);
 }
+/* Keep native table semantics while each swipeable row clips its trailing action. */
+.swipe-set-table,
+.swipe-set-table thead,
+.swipe-set-table tbody,
+.swipe-set-table tfoot {
+  display: block;
+}
+.swipe-set-table tr {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 68px 52px;
+}
+.swipe-set-table tbody tr {
+  overflow: hidden;
+  isolation: isolate;
+}
+.swipe-set-table tr > th,
+.swipe-set-table tr > th:first-child,
+.swipe-set-table tr > th:last-child,
+.swipe-set-table tr > td {
+  width: auto;
+  min-width: 0;
+  align-content: center;
+}
+.swipe-set-table tbody tr > th,
+.swipe-set-table tbody tr > td {
+  transform: translateX(var(--set-offset, 0px));
+  transition: transform 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.swipe-set-table tbody tr[data-dragging='true'] > * {
+  transition: none;
+  user-select: none;
+}
+.swipe-set-table .tablecoldone {
+  position: relative;
+}
+.swipe-set-table .set-delete-action {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  bottom: 0;
+  width: 80px;
+  min-height: 44px;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-radius: 0;
+  background: var(--red);
+  color: white;
+  font-size: 12px;
+}
+.swipe-set-table .set-delete-action:hover {
+  background: var(--red);
+  filter: brightness(0.92);
+}
+.swipe-set-table tfoot tr {
+  display: block;
+}
+@media (prefers-reduced-motion: reduce) {
+  .swipe-set-table tbody tr > th,
+  .swipe-set-table tbody tr > td {
+    transition: none;
+  }
+}
 .set-done-control input {
   width: 20px;
   height: 20px;

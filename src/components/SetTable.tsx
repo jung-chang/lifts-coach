@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { Button } from './ui/Button';
 import { fromDisplayWeight, toDisplayWeight } from '../../shared/domain';
@@ -9,6 +9,7 @@ type Unit = 'lb' | 'kg';
 type Field = 'weight' | 'reps';
 type InputDraft = { value: string; unit?: Unit; submitted?: boolean };
 type Drafts = Record<string, Partial<Record<Field, InputDraft>>>;
+const DELETE_WIDTH = 80;
 type Props = {
   exercise: WorkoutExercise;
   unit: Unit;
@@ -36,8 +37,32 @@ export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove, onUn
   // this buffer; an acknowledged edit therefore cannot mask later Undo/sync.
   const [drafts, setDrafts] = useState<Drafts>({});
   const [deleteRow, setDeleteRow] = useState<string | null>(null);
-  const gesture = useRef<{ id: string; x: number; y: number } | null>(null);
-  const swiped = useRef(false);
+  const [drag, setDrag] = useState<{ id: string; offset: number } | null>(null);
+  const gesture = useRef<{
+    id: string;
+    pointerId: number;
+    x: number;
+    y: number;
+    dx: number;
+    horizontal: boolean;
+    offset: number;
+  } | null>(null);
+  const pointerFocus = useRef(false);
+  const swiped = useRef<string | null>(null);
+  useEffect(() => {
+    const dismiss = (event: PointerEvent) => {
+      pointerFocus.current = false;
+      if (!(event.target instanceof Element) || !event.target.closest('[data-swipe-open="true"]'))
+        setDeleteRow(null);
+    };
+    document.addEventListener('pointerdown', dismiss, true);
+    return () => document.removeEventListener('pointerdown', dismiss, true);
+  }, []);
+  useEffect(() => {
+    setDeleteRow(null);
+    setDrag(null);
+    gesture.current = null;
+  }, [exercise.id]);
   useEffect(() => {
     const focusedKey = document.activeElement?.getAttribute('data-set-input');
     setDrafts((old) => {
@@ -123,7 +148,10 @@ export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove, onUn
   const count = { working: 0, warmup: 0 };
   return (
     <div className="workout-table-card">
-      <table className="compact-set-table" aria-label={`${exercise.name} sets`}>
+      <table
+        className={`compact-set-table${onRemove ? ' swipe-set-table' : ''}`}
+        aria-label={`${exercise.name} sets`}
+      >
         <thead>
           <tr>
             <th className="tablecolset">Set</th>
@@ -141,6 +169,8 @@ export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove, onUn
             const repsValid = parsedFor(set, 'reps') !== null;
             const invalid = !weightValid || !repsValid;
             const mode = set.loadMode || exercise.loadMode;
+            const offset =
+              drag?.id === set.id ? drag.offset : deleteRow === set.id ? -DELETE_WIDTH : 0;
             const done = (checked: boolean) => {
               if (checked && invalid) return;
               const patch: Partial<WorkoutSet> = {};
@@ -159,11 +189,20 @@ export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove, onUn
                 key={set.id}
                 tabIndex={onRemove ? 0 : undefined}
                 aria-label={onRemove ? `Set ${ordinal} actions` : undefined}
-                style={onRemove ? { touchAction: 'pan-y' } : undefined}
+                data-swipe-open={deleteRow === set.id}
+                data-dragging={drag?.id === set.id}
+                style={
+                  onRemove
+                    ? ({ touchAction: 'pan-y', '--set-offset': `${offset}px` } as CSSProperties)
+                    : undefined
+                }
                 onFocus={(event) => {
-                  if (onRemove && event.target === event.currentTarget) setDeleteRow(set.id);
+                  if (onRemove && !pointerFocus.current && event.target === event.currentTarget)
+                    setDeleteRow(set.id);
+                  else if ((event.target as Element).matches('input, select')) setDeleteRow(null);
                 }}
                 onKeyDown={(event) => {
+                  pointerFocus.current = false;
                   if (onRemove && event.target === event.currentTarget && event.key === 'Delete') {
                     event.preventDefault();
                     onRemove(set.id);
@@ -171,34 +210,77 @@ export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove, onUn
                   }
                   if (event.key === 'Escape') setDeleteRow(null);
                 }}
-                onPointerDown={(event) => {
-                  if (!onRemove || event.button !== 0) return;
-                  swiped.current = false;
-                  gesture.current = { id: set.id, x: event.clientX, y: event.clientY };
+                onPointerDownCapture={(event) => {
+                  pointerFocus.current = true;
+                  swiped.current = null;
+                  gesture.current = null;
+                  setDrag(null);
+                  if (!onRemove || event.button !== 0 || event.isPrimary === false) return;
+                  // Text editing owns its gestures; Done can initiate a deliberate swipe.
+                  if (
+                    (event.target as Element).closest(
+                      'input:not([type="checkbox"]), button, select, textarea, a',
+                    )
+                  ) {
+                    return;
+                  }
+                  gesture.current = {
+                    id: set.id,
+                    pointerId: event.pointerId,
+                    x: event.clientX,
+                    y: event.clientY,
+                    dx: 0,
+                    horizontal: false,
+                    offset: deleteRow === set.id ? -DELETE_WIDTH : 0,
+                  };
                 }}
                 onPointerMove={(event) => {
                   const start = gesture.current;
-                  if (!start || start.id !== set.id) return;
+                  if (!start || start.id !== set.id || start.pointerId !== event.pointerId) return;
                   const dx = event.clientX - start.x,
                     dy = event.clientY - start.y;
-                  if (Math.abs(dy) > 12 && Math.abs(dy) > Math.abs(dx)) {
+                  if (!start.horizontal && Math.abs(dy) >= 10 && Math.abs(dy) * 2 >= Math.abs(dx)) {
                     gesture.current = null;
-                  } else if (Math.abs(dx) > 24 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-                    swiped.current = true;
+                  } else if (Math.abs(dx) >= 16 && Math.abs(dx) > Math.abs(dy) * 2) {
+                    if (!start.horizontal) event.currentTarget.setPointerCapture?.(event.pointerId);
+                    start.horizontal = true;
+                  }
+                  if (start.horizontal) {
+                    start.dx = Math.max(-DELETE_WIDTH, Math.min(0, start.offset + dx));
+                    swiped.current = set.id;
+                    setDrag({ id: set.id, offset: start.dx });
                     event.preventDefault();
-                    setDeleteRow(dx < 0 ? set.id : null);
                   }
                 }}
-                onPointerUp={() => {
+                onPointerUp={(event) => {
+                  const start = gesture.current;
+                  if (start?.id === set.id && start.pointerId === event.pointerId) {
+                    if (start.horizontal)
+                      setDeleteRow(start.dx <= -DELETE_WIDTH / 2 ? set.id : null);
+                  }
+                  setDrag(null);
+                  pointerFocus.current = false;
                   gesture.current = null;
                 }}
                 onPointerCancel={() => {
+                  pointerFocus.current = false;
                   gesture.current = null;
+                  swiped.current = null;
+                  setDrag(null);
+                }}
+                onLostPointerCapture={(event) => {
+                  // A child loses implicit touch capture when the row takes over the swipe.
+                  if (event.target !== event.currentTarget) return;
+                  gesture.current = null;
+                  setDrag(null);
                 }}
                 onClickCapture={(event) => {
-                  if (swiped.current && event.detail > 0) {
+                  if (swiped.current === set.id && event.detail > 0) {
                     event.preventDefault();
                     event.stopPropagation();
+                    swiped.current = null;
+                  } else if (!(event.target as Element).closest('button')) {
+                    setDeleteRow(null);
                   }
                 }}
                 className={
@@ -268,11 +350,24 @@ export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove, onUn
                   />
                 </td>
                 <td className="tablecoldone">
-                  {onRemove && deleteRow === set.id ? (
+                  <label className="set-done-control" aria-label={`Set ${ordinal} done`}>
+                    <input
+                      aria-label={`Set ${ordinal} done`}
+                      type="checkbox"
+                      disabled={invalid && set.status !== 'completed'}
+                      checked={set.status === 'completed'}
+                      onChange={(event) => {
+                        setDeleteRow(null);
+                        done(event.target.checked);
+                      }}
+                    />
+                  </label>
+                  {onRemove && (deleteRow === set.id || drag?.id === set.id) && (
                     <Button
                       variant="ghost"
-                      size="icon"
                       className="set-delete-action"
+                      aria-hidden={deleteRow !== set.id}
+                      tabIndex={deleteRow === set.id ? 0 : -1}
                       aria-label={`Delete set ${ordinal}`}
                       title="Delete set for today"
                       onClick={() => {
@@ -281,17 +376,8 @@ export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove, onUn
                       }}
                     >
                       <Trash2 size={18} aria-hidden="true" />
+                      <span>Delete</span>
                     </Button>
-                  ) : (
-                    <label className="set-done-control" aria-label={`Set ${ordinal} done`}>
-                      <input
-                        aria-label={`Set ${ordinal} done`}
-                        type="checkbox"
-                        disabled={invalid && set.status !== 'completed'}
-                        checked={set.status === 'completed'}
-                        onChange={(event) => done(event.target.checked)}
-                      />
-                    </label>
                   )}
                 </td>
               </tr>
