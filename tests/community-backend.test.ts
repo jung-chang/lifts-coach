@@ -18,6 +18,7 @@ class TestD1 {
       '0003_account_isolation.sql',
       '0004_accounts_community.sql',
       '0005_profile_setup.sql',
+      '0006_enable_existing_sharing.sql',
     ])
       this.db.exec(readFileSync(new URL(`../migrations/${file}`, import.meta.url), 'utf8'));
   }
@@ -173,6 +174,106 @@ function finishedData() {
 }
 
 describe('community backend authorization and publication', () => {
+  it.each([
+    { summary: false, automatic: false },
+    { summary: false, automatic: true },
+    { summary: true, automatic: false },
+    { summary: true, automatic: true },
+  ])(
+    'enables existing sharing defaults once without changing workout privacy ($summary/$automatic)',
+    async ({ summary, automatic }) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => Response.json(jwks)),
+      );
+      const db = new TestD1();
+      const token = await auth('migration@example.test', 'migration-subject');
+      const initial = (await (await call(db, token, '/api/session')).json()) as any;
+      const accountId = initial.accountId;
+      const oldTime = '2026-10-01T00:00:00.000Z';
+      db.db
+        .prepare(
+          'UPDATE sharing_settings SET summary_enabled=?,auto_publish_workouts=?,workout_sharing_enabled_at=?,audience_acknowledged_at=?,policy_revision=4 WHERE account_id=?',
+        )
+        .run(Number(summary), Number(automatic), automatic ? oldTime : null, oldTime, accountId);
+      const data = finishedData();
+      data.workouts[0].communityVisibility = { visibility: 'private', policyRevision: 4 };
+      expect(
+        (
+          await call(db, token, '/api/state', 'PUT', {
+            accountId,
+            deviceId: 'synthetic-device',
+            operationId: 'before-migration',
+            baseRevision: 0,
+            data,
+          })
+        ).status,
+      ).toBe(200);
+      const readSettings = () =>
+        db.db.prepare('SELECT * FROM sharing_settings WHERE account_id=?').get(accountId)!;
+      const before = readSettings();
+      const beforeState = db.db
+        .prepare('SELECT * FROM account_state WHERE account_id=?')
+        .get(accountId);
+      const beforeVisibility = db.db
+        .prepare('SELECT * FROM workout_visibility WHERE account_id=?')
+        .all(accountId);
+      const migration = readFileSync(
+        new URL('../migrations/0006_enable_existing_sharing.sql', import.meta.url),
+        'utf8',
+      );
+      db.db.exec(migration);
+      const after = (await (await call(db, token, '/api/session')).json()) as any;
+      expect(after.sharing.summaryEnabled).toBe(true);
+      expect(after.sharing.autoPublishWorkouts).toBe(true);
+      expect(after.sharing.policyRevision).toBe(summary && automatic ? 4 : 5);
+      expect(after.sharing.audienceAcknowledgedAt).toBe(oldTime);
+      if (automatic) expect(after.sharing.enabledAt).toBe(oldTime);
+      else expect(Date.parse(after.sharing.enabledAt)).toBeGreaterThan(Date.parse(oldTime));
+      expect(
+        db.db.prepare('SELECT * FROM account_state WHERE account_id=?').get(accountId),
+      ).toEqual(beforeState);
+      expect(
+        db.db.prepare('SELECT * FROM workout_visibility WHERE account_id=?').all(accountId),
+      ).toEqual(beforeVisibility);
+      expect(
+        ((await (await call(db, token, '/api/community/feed')).json()) as any).items,
+      ).toHaveLength(0);
+      // An already-enabled row is unchanged; stale clients cannot undo a changed policy.
+      if (summary && automatic) expect(readSettings()).toEqual(before);
+      else
+        expect(
+          (
+            await call(db, token, '/api/me/sharing', 'PATCH', {
+              summaryEnabled: false,
+              autoPublishWorkouts: false,
+              policyRevision: 4,
+            })
+          ).status,
+        ).toBe(409);
+      const enabledSettings = readSettings();
+      db.db.exec(migration);
+      expect(readSettings()).toEqual(enabledSettings);
+      // D1 applies this migration once. Normal requests still honor a later opt-out.
+      expect(
+        (
+          await call(db, token, '/api/me/sharing', 'PATCH', {
+            summaryEnabled: false,
+            autoPublishWorkouts: false,
+            policyRevision: after.sharing.policyRevision,
+          })
+        ).status,
+      ).toBe(200);
+      await call(db, token, '/api/me/profile', 'PATCH', {
+        displayName: 'Synthetic member',
+        trainingTimezone: 'UTC',
+      });
+      const optedOut = (await (await call(db, token, '/api/session')).json()) as any;
+      expect(optedOut.sharing.autoPublishWorkouts).toBe(false);
+      expect(optedOut.sharing.summaryEnabled).toBe(false);
+      db.db.close();
+    },
+  );
   it('shows shared custom exercise snapshot names without adding them to the viewer library', async () => {
     vi.stubGlobal(
       'fetch',
