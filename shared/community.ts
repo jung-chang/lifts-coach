@@ -39,6 +39,8 @@ export interface FeedPage {
 }
 export interface SharedWorkout {
   id: string;
+  /** Present only when the viewer owns the workout, for privacy controls. */
+  ownerWorkoutId?: string;
   profile: PublicProfile;
   title: string;
   startedAt: string;

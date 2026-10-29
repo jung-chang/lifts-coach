@@ -219,23 +219,6 @@
   margin: 16px 0 0;
   font-size: 13px;
 }
-.workout-visibility {
-  margin-top: 16px;
-  padding-top: 12px;
-}
-.workout-visibility > .row {
-  gap: 16px;
-  flex-wrap: wrap;
-}
-.workout-visibility p {
-  margin: 5px 0;
-}
-.sharing-exercise-preview {
-  padding-left: 20px;
-  font-size: 14px;
-  line-height: 1.8;
-  margin: 16px 0;
-}
 .own-workout-summary > .page-heading {
   margin-top: 16px;
   flex-wrap: wrap;

@@ -69,7 +69,8 @@ export function ProfileSetup({
         </div>
         <p className="muted small">
           Future finished workouts share dates, exercises, loads and reps with members by default.
-          Change this in account settings. Profile stats, email, notes and chats stay private.
+          Manage the default with Enable sharing on your profile. Email, notes and chats stay
+          private.
         </p>
         {error && <p role="alert">{error}</p>}
         <Button type="submit" variant="primary" size="lg" disabled={busy || !name.trim()}>

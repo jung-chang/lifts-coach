@@ -921,6 +921,7 @@ app.get('/api/community/workouts/:publicationId', async (c) => {
       : [];
   return c.json({
     id: c.req.param('publicationId'),
+    ...(row.accountId === c.get('accountId') ? { ownerWorkoutId: row.workoutId } : {}),
     recordSetIds,
     profile: {
       publicId: row.publicId,

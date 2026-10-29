@@ -13,6 +13,7 @@ import { Button } from './ui/Button';
 import { TimezonePicker } from './TimezonePicker';
 import { formatLoadValue } from './LoadSemantics';
 import { WorkoutDetails } from './WorkoutDetails';
+import { MakeWorkoutPrivate } from './MakeWorkoutPrivate';
 import { WorkoutPreviewCard } from './WorkoutPreviewCard';
 import {
   blockProfile,
@@ -588,6 +589,8 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
           {detailError && <Failure message={detailError} retry={() => setView({ ...view })} />}
           {workout && (
             <SharedWorkoutContent
+              session={session}
+              onPrivate={() => go({ kind: 'feed' })}
               workout={workout}
               unit={unit}
               onProfile={() => go({ kind: 'profile', id: workout.profile.publicId })}
@@ -908,10 +911,14 @@ function SharedWorkoutContent({
   workout,
   unit,
   onProfile,
+  session,
+  onPrivate,
 }: {
   workout: SharedWorkout;
   unit: Unit;
   onProfile: () => void;
+  session: AccountSession;
+  onPrivate: () => void;
 }) {
   return (
     <div className="community-workout-detail">
@@ -935,6 +942,16 @@ function SharedWorkoutContent({
           })),
         }))}
         unit={unit}
+        footer={
+          workout.ownerWorkoutId && workout.profile.publicId === session.profile.publicId ? (
+            <MakeWorkoutPrivate
+              key={`${session.accountId}:${workout.ownerWorkoutId}`}
+              session={session}
+              workoutId={workout.ownerWorkoutId}
+              onPrivate={onPrivate}
+            />
+          ) : undefined
+        }
       />
     </div>
   );
@@ -984,8 +1001,7 @@ export function OwnProfileScreen({
   const [settings, setSettings] = useState(false);
   const [name, setName] = useState(session?.profile.displayName ?? '');
   const [timezone, setTimezone] = useState(session?.profile.trainingTimezone ?? 'UTC');
-  const [automatic, setAutomatic] = useState(session?.sharing.autoPublishWorkouts ?? false);
-  const [shared, setShared] = useState(session?.sharing.summaryEnabled ?? false);
+  const [shared, setShared] = useState(session?.sharing.autoPublishWorkouts ?? false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState('');
@@ -994,8 +1010,7 @@ export function OwnProfileScreen({
   useEffect(() => {
     setName(session?.profile.displayName ?? '');
     setTimezone(session?.profile.trainingTimezone ?? 'UTC');
-    setAutomatic(session?.sharing.autoPublishWorkouts ?? false);
-    setShared(session?.sharing.summaryEnabled ?? false);
+    setShared(session?.sharing.autoPublishWorkouts ?? false);
   }, [session]);
   const go = (next: ProfileSection) => {
     setView(next);
@@ -1025,15 +1040,15 @@ export function OwnProfileScreen({
         <Button onClick={onBack}>Back</Button>
       </main>
     );
-  const toggleStats = () =>
+  const toggleSharing = () =>
     void run(async () => {
       const next = await patchSharing(session.accountId, {
         summaryEnabled: !shared,
-        autoPublishWorkouts: session.sharing.autoPublishWorkouts,
+        autoPublishWorkouts: !shared,
         policyRevision: session.sharing.policyRevision,
         audienceAcknowledged: !shared,
       });
-      if (account.current === session.accountId) setShared(next.sharing.summaryEnabled);
+      if (account.current === session.accountId) setShared(next.sharing.autoPublishWorkouts);
       return next;
     });
   return (
@@ -1062,7 +1077,6 @@ export function OwnProfileScreen({
           onClick={() => {
             setError('');
             setTimezone(session.profile.trainingTimezone);
-            setAutomatic(session.sharing.autoPublishWorkouts);
             setSettings(true);
           }}
         >
@@ -1084,24 +1098,22 @@ export function OwnProfileScreen({
           <TrainingLinks onStats={() => go('stats')} onHistory={() => go('history')} />
           <div className="profile-share-setting">
             <div>
-              <label htmlFor="share-profile-stats">
-                Share profile stats with others in community
-              </label>
+              <label htmlFor="share-with-community">Enable sharing</label>
               <p className="muted small">
-                When on, members can see your all-history exercise stats and lift records, including
-                private workouts. Workout sharing is separate. Notes and Coach conversations stay
-                private.
+                Share new workouts, all-history stats and lift records with the community by
+                default. Individual workouts can be made private, but still count toward shared
+                stats. Notes and chats stay private. Existing workouts keep their visibility.
               </p>
             </div>
             <button
-              id="share-profile-stats"
+              id="share-with-community"
               className="switch"
               role="switch"
-              aria-label="Share profile stats with others in community"
+              aria-label="Enable sharing"
               aria-checked={shared}
               data-on={shared}
               disabled={busy}
-              onClick={toggleStats}
+              onClick={toggleSharing}
             >
               <span />
             </button>
@@ -1171,18 +1183,6 @@ export function OwnProfileScreen({
           <span className="muted small">Training timezone</span>
           <TimezonePicker value={timezone} onChange={setTimezone} />
         </div>
-        <label className="community-consent">
-          <input
-            type="checkbox"
-            checked={automatic}
-            onChange={(e) => setAutomatic(e.target.checked)}
-          />
-          <span>Automatically share future finished workouts</span>
-        </label>
-        <p className="muted small">
-          All admitted members can see shared workout dates, exercise names, completed loads and
-          reps. Older workouts remain private. Turning this off affects future workouts.
-        </p>
         <Button
           disabled={busy}
           onClick={() =>
@@ -1192,13 +1192,6 @@ export function OwnProfileScreen({
                 next = await patchProfile(session.accountId, {
                   displayName: session.profile.displayName,
                   trainingTimezone: timezone,
-                });
-              if (automatic !== session.sharing.autoPublishWorkouts)
-                next = await patchSharing(session.accountId, {
-                  summaryEnabled: shared,
-                  autoPublishWorkouts: automatic,
-                  policyRevision: session.sharing.policyRevision,
-                  audienceAcknowledged: automatic,
                 });
               setStatus('Account settings saved.');
               return next;

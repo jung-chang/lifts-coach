@@ -20,7 +20,7 @@ const session: AccountSession = {
   profile: { publicId: 'synthetic-profile', displayName: 'Alex Example', trainingTimezone: 'UTC' },
   sharing: {
     summaryEnabled: false,
-    autoPublishWorkouts: true,
+    autoPublishWorkouts: false,
     policyRevision: 3,
     audienceAcknowledgedAt: '2026-10-18T00:00:00Z',
     enabledAt: '2026-10-18T00:00:00Z',
@@ -97,16 +97,24 @@ it('edits only the display name through the pencil surface', async () => {
   expect(screen.queryByRole('dialog')).toBeNull();
 });
 
-it('keeps sharing off on a failed save and preserves the independent workout setting on retry', async () => {
+it('keeps sharing off on a failed save and enables stats and automatic workouts together on retry', async () => {
   const p = props(),
-    next = { ...session, sharing: { ...session.sharing, summaryEnabled: true, policyRevision: 4 } };
+    next = {
+      ...session,
+      sharing: {
+        ...session.sharing,
+        summaryEnabled: true,
+        autoPublishWorkouts: true,
+        policyRevision: 4,
+      },
+    };
   const fetchMock = vi
     .spyOn(globalThis, 'fetch')
     .mockResolvedValueOnce(Response.json({ error: 'changed' }, { status: 409 }))
     .mockResolvedValueOnce(Response.json(next));
   render(<OwnProfileScreen {...p} />);
   const toggle = screen.getByRole('switch', {
-    name: 'Share profile stats with others in community',
+    name: 'Enable sharing',
   });
   fireEvent.click(toggle);
   await screen.findByRole('alert');
@@ -119,4 +127,43 @@ it('keeps sharing off on a failed save and preserves the independent workout set
     policyRevision: 3,
     audienceAcknowledged: true,
   });
+});
+
+it('turns off stats and future workout sharing with the same profile switch', async () => {
+  const p = props();
+  const enabled = {
+    ...session,
+    sharing: { ...session.sharing, summaryEnabled: true, autoPublishWorkouts: true },
+  };
+  const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json(session));
+  render(<OwnProfileScreen {...p} session={enabled} />);
+  fireEvent.click(screen.getByRole('switch', { name: 'Enable sharing' }));
+  await waitFor(() => expect(p.onSessionChange).toHaveBeenCalledWith(session));
+  expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+    summaryEnabled: false,
+    autoPublishWorkouts: false,
+    policyRevision: 3,
+    audienceAcknowledged: false,
+  });
+});
+
+it('keeps account settings free of separate workout sharing controls', () => {
+  render(<OwnProfileScreen {...props()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Account settings' }));
+  const dialog = screen.getByRole('dialog', { name: 'Account settings' });
+  expect(within(dialog).queryByRole('checkbox')).toBeNull();
+  expect(within(dialog).queryByRole('switch')).toBeNull();
+  expect(within(dialog).getByRole('button', { name: 'Save account settings' })).toBeTruthy();
+});
+
+it('reflects existing automatic workout sharing even when legacy stats sharing is off', () => {
+  render(
+    <OwnProfileScreen
+      {...props()}
+      session={{ ...session, sharing: { ...session.sharing, autoPublishWorkouts: true } }}
+    />,
+  );
+  expect(screen.getByRole('switch', { name: 'Enable sharing' }).getAttribute('aria-checked')).toBe(
+    'true',
+  );
 });

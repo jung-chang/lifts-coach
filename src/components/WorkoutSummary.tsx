@@ -2,8 +2,8 @@ import { ArrowLeft, RotateCcw } from 'lucide-react';
 import type { AccountSession } from '../../shared/community';
 import type { Unit, Workout, WorkoutExercise } from '../../shared/types';
 import { WorkoutDetails } from './WorkoutDetails';
-import { WorkoutVisibilityControl } from './WorkoutVisibilityControl';
 import { Button } from './ui/Button';
+import { MakeWorkoutPrivate } from './MakeWorkoutPrivate';
 import type { PersonalRecord } from '../../shared/personalRecords';
 
 export function WorkoutSummary({
@@ -100,6 +100,13 @@ export function WorkoutSummary({
         }}
         footer={
           <>
+            {session && synced && (
+              <MakeWorkoutPrivate
+                key={`${session.accountId}:${workout.id}`}
+                session={session}
+                workoutId={workout.id}
+              />
+            )}
             {(workout.notes?.trim() || workout.feeling) && (
               <div className="summary-private-notes">
                 <h3>Workout feedback</h3>
@@ -110,15 +117,6 @@ export function WorkoutSummary({
           </>
         }
       />
-
-      <section className="card card-pad" style={{ marginTop: 18 }}>
-        <WorkoutVisibilityControl
-          session={session}
-          workout={workout}
-          synced={synced}
-          onLocalChange={() => undefined}
-        />
-      </section>
     </main>
   );
 }

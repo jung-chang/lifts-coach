@@ -112,6 +112,7 @@ const validResponse = (path: string, value: unknown) => {
     return (
       isRecord(value) &&
       typeof value.id === 'string' &&
+      (value.ownerWorkoutId === undefined || typeof value.ownerWorkoutId === 'string') &&
       isProfile(value.profile) &&
       typeof value.title === 'string' &&
       (value.recordSetIds === undefined ||

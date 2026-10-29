@@ -872,7 +872,7 @@ describe('community backend authorization and publication', () => {
     db.db.close();
   });
 
-  it('keeps existing shares when auto-sharing stops and preserves a private override across stale snapshot sync', async () => {
+  it('keeps existing shares when auto-sharing stops and preserves a private override across stale sync and re-enabling the default', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => Response.json(jwks)),
@@ -948,6 +948,29 @@ describe('community backend authorization and publication', () => {
         .prepare('SELECT visibility FROM workout_visibility WHERE account_id=? AND workout_id=?')
         .get(session.accountId, 'workout-1'),
     ).toEqual({ visibility: 'private' });
+    // Re-enabling the default must not publish a workout made private individually.
+    expect(
+      (
+        await call(db, token, '/api/me/sharing', 'PATCH', {
+          summaryEnabled: true,
+          autoPublishWorkouts: true,
+          policyRevision: stopped.sharing.policyRevision,
+          audienceAcknowledged: true,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await call(db, token, '/api/state', 'PUT', {
+          ...sync,
+          operationId: 'reenabled-default',
+          baseRevision: 2,
+        })
+      ).status,
+    ).toBe(200);
+    expect(
+      ((await (await call(db, token, '/api/community/feed')).json()) as any).items,
+    ).toHaveLength(0);
     db.db.close();
   });
 
@@ -1047,6 +1070,14 @@ describe('community backend authorization and publication', () => {
     expect(page.items[0].title).toBe('Upper session');
     expect(page.items[0].setCount).toBe(1);
     expect(page.items[0].exerciseNames).toEqual(['Bench press']);
+    const ownerDetail = (await (
+      await call(db, owner, `/api/community/workouts/${page.items[0].id}`)
+    ).json()) as any;
+    expect(ownerDetail.ownerWorkoutId).toBe('workout-1');
+    const memberDetail = (await (
+      await call(db, member, `/api/community/workouts/${page.items[0].id}`)
+    ).json()) as any;
+    expect(memberDetail.ownerWorkoutId).toBeUndefined();
     expect(JSON.stringify(page)).not.toContain('private note');
     expect(JSON.stringify(page)).not.toContain('synthetic private exercise note');
     expect(JSON.stringify(page)).not.toContain('synthetic persistent instruction private');

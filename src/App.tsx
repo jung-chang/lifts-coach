@@ -91,7 +91,6 @@ import {
 import { exerciseStatsFromWorkouts } from '../shared/trainingStats';
 import { personalRecordsFromWorkouts } from '../shared/personalRecords';
 import { WorkoutRecords } from './components/PersonalRecords';
-import { WorkoutVisibilityControl } from './components/WorkoutVisibilityControl';
 import type { AccountSession } from '../shared/community';
 import { mondayOfDate, recentMondayDates, trainingDateAt } from '../shared/trainingDates';
 import './shell.css';
@@ -1740,14 +1739,6 @@ function App() {
                 (record) => record.workoutId === summaryWorkout.id,
               )}
               unit={data?.settings.unit ?? 'lb'}
-            />
-          )}
-          {session && summaryWorkout && (
-            <WorkoutVisibilityControl
-              session={session}
-              workout={summaryWorkout}
-              synced={status === 'synced'}
-              onLocalChange={async () => false}
             />
           )}
           {summaryWorkout && (

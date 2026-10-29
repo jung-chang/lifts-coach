@@ -83,31 +83,26 @@ describe('integrated editor navigation', () => {
     expect(screen.getByLabelText('Routine name')).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Ask Coach/ })).toBeNull();
   });
-  it('offers explicit private-by-default sharing after a member finishes a workout', async () => {
-    fixture.session.coachEnabled = false;
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (url) =>
-        Response.json(
-          String(url).endsWith('/visibility') ? { visibility: 'private', decisionRevision: 0 } : [],
-        ),
-      ),
-    );
-    render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: 'Use starter routine' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Start workout' }));
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Set 1 done' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Finish workout' }));
-    const summary = await screen.findByRole('dialog', { name: 'Workout saved' });
-    expect(within(summary).getByText('Only me')).toBeTruthy();
-    await waitFor(() =>
-      expect(
-        (within(summary).getByRole('button', { name: 'Share workout' }) as HTMLButtonElement)
-          .disabled,
-      ).toBe(false),
-    );
-    expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false);
-  });
+  it.each([false, true])(
+    'finishes without separate sharing controls when profile sharing is %s',
+    async (sharing) => {
+      fixture.session.coachEnabled = false;
+      fixture.session.sharing.summaryEnabled = sharing;
+      fixture.session.sharing.autoPublishWorkouts = sharing;
+      render(<App />);
+      fireEvent.click(screen.getByRole('button', { name: 'Use starter routine' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Start workout' }));
+      fireEvent.click(await screen.findByRole('checkbox', { name: 'Set 1 done' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Finish workout' }));
+      const summary = await screen.findByRole('dialog', { name: 'Workout saved' });
+      expect(within(summary).queryByText('Workout visibility')).toBeNull();
+      expect(within(summary).queryByRole('button', { name: 'Share workout' })).toBeNull();
+      expect(fixture.data.workouts[0].communityVisibility.visibility).toBe(
+        sharing ? 'community' : 'private',
+      );
+      expect(vi.mocked(fetch).mock.calls.some(([, init]) => init?.method === 'PUT')).toBe(false);
+    },
+  );
   it('opens routine creation directly with the new title field focused', () => {
     render(<App />);
     fireEvent.click(screen.getByRole('button', { name: 'Create routine' }));

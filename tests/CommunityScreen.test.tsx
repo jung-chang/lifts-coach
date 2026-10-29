@@ -39,6 +39,50 @@ const jsonResponse = (value: unknown) =>
   });
 
 describe('CommunityScreen', () => {
+  it('lets the owner make a shared workout private from its Community detail', async () => {
+    let hidden = false;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.includes('/feed'))
+        return jsonResponse({
+          items: hidden ? [] : [{ ...feedItem, profile: session.profile }],
+          nextCursor: null,
+        });
+      if (url.endsWith('/visibility')) {
+        if (init?.method === 'PUT') hidden = true;
+        return jsonResponse({
+          visibility: hidden ? 'private' : 'community',
+          decisionRevision: hidden ? 1 : 0,
+        });
+      }
+      return jsonResponse({
+        id: 'pub-a',
+        ownerWorkoutId: 'synthetic-workout',
+        profile: session.profile,
+        title: 'Upper body',
+        startedAt: '2026-10-18T14:00:00Z',
+        completedAt: feedItem.activityAt,
+        exercises: [],
+      });
+    });
+    render(
+      <CommunityScreen
+        session={session}
+        unit="lb"
+        onSessionChange={() => {}}
+        onSettings={() => {}}
+        onCoach={() => {}}
+      />,
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: /View Upper body workout by My Name/ }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Make private' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Make private' })).toBeNull());
+    await waitFor(() => expect(hidden).toBe(true));
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PUT')).toHaveLength(1);
+    await waitFor(() => expect(screen.queryByText('Upper body')).toBeNull());
+  });
   it('keeps a pending Load more request alive after the initial feed finishes', async () => {
     let resolveMore: ((response: Response) => void) | undefined;
     let moreSignal: AbortSignal | undefined;
