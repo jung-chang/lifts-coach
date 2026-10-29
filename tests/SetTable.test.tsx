@@ -17,6 +17,31 @@ afterEach(() => {
 });
 
 describe('SetTable input drafts', () => {
+  it('does not open row actions when touch focus arrives after release on Done', () => {
+    vi.stubGlobal('PointerEvent', MouseEvent);
+    const onDone = vi.fn();
+    render(
+      <SetTable
+        exercise={getExercise()}
+        unit="lb"
+        onEdit={vi.fn()}
+        onDone={onDone}
+        onRemove={vi.fn()}
+      />,
+    );
+    const row = screen.getByRole('row', { name: 'Set 1 actions' });
+    const label = screen.getByRole('checkbox', { name: 'Set 1 done' }).closest('label')!;
+    fireEvent.pointerDown(label, { button: 0 });
+    fireEvent.pointerUp(label);
+    fireEvent.focus(row);
+    expect(screen.queryByRole('button', { name: 'Delete set 1' })).toBeNull();
+    fireEvent.click(label);
+    expect(onDone).toHaveBeenCalledTimes(1);
+    fireEvent.keyDown(document.body, { key: 'Tab' });
+    fireEvent.focus(row);
+    expect(screen.getByRole('button', { name: 'Delete set 1' })).toBeTruthy();
+  });
+
   it('tracks a swipe, keeps Done present, snaps open, and closes on a right swipe or outside tap', () => {
     vi.stubGlobal('PointerEvent', MouseEvent);
     const onRemove = vi.fn();

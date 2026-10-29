@@ -51,12 +51,19 @@ export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove, onUn
   const swiped = useRef<string | null>(null);
   useEffect(() => {
     const dismiss = (event: PointerEvent) => {
-      pointerFocus.current = false;
+      pointerFocus.current = true;
       if (!(event.target instanceof Element) || !event.target.closest('[data-swipe-open="true"]'))
         setDeleteRow(null);
     };
+    const keyboardFocus = () => {
+      pointerFocus.current = false;
+    };
     document.addEventListener('pointerdown', dismiss, true);
-    return () => document.removeEventListener('pointerdown', dismiss, true);
+    document.addEventListener('keydown', keyboardFocus, true);
+    return () => {
+      document.removeEventListener('pointerdown', dismiss, true);
+      document.removeEventListener('keydown', keyboardFocus, true);
+    };
   }, []);
   useEffect(() => {
     setDeleteRow(null);
@@ -199,7 +206,10 @@ export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove, onUn
                 onFocus={(event) => {
                   if (onRemove && !pointerFocus.current && event.target === event.currentTarget)
                     setDeleteRow(set.id);
-                  else if ((event.target as Element).matches('input, select')) setDeleteRow(null);
+                  else if (
+                    (event.target as Element).matches('input:not([type="checkbox"]), select')
+                  )
+                    setDeleteRow(null);
                 }}
                 onKeyDown={(event) => {
                   pointerFocus.current = false;
@@ -259,11 +269,9 @@ export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove, onUn
                       setDeleteRow(start.dx <= -DELETE_WIDTH / 2 ? set.id : null);
                   }
                   setDrag(null);
-                  pointerFocus.current = false;
                   gesture.current = null;
                 }}
                 onPointerCancel={() => {
-                  pointerFocus.current = false;
                   gesture.current = null;
                   swiped.current = null;
                   setDrag(null);
@@ -279,7 +287,7 @@ export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove, onUn
                     event.preventDefault();
                     event.stopPropagation();
                     swiped.current = null;
-                  } else if (!(event.target as Element).closest('button')) {
+                  } else if (!(event.target as Element).closest('button, input, label, select')) {
                     setDeleteRow(null);
                   }
                 }}
