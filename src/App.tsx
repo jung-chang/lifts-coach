@@ -1145,7 +1145,6 @@ function App() {
                   requestDiscard={() => setDiscardWorkoutRequested(workout!.id)}
                   say={say}
                   mutate={mutate}
-                  undoRemoveSet={undo?.label === 'Set removed for today' ? undoLast : undefined}
                   saveFeedback={(
                     feedback: {
                       notes?: string;
@@ -1835,7 +1834,6 @@ function WorkoutScreen({
   requestDiscard,
   say,
   mutate,
-  undoRemoveSet,
   saveFeedback,
 }: any) {
   const [replacementOpen, setReplacementOpen] = useState(false);
@@ -2040,21 +2038,12 @@ function WorkoutScreen({
               <SetTable
                 exercise={ex}
                 unit={unit}
-                onUndoRemove={undoRemoveSet}
                 onEdit={(set, patch) => editSet(ex.id, set, patch)}
                 onDone={(setId, done, patch) => toggleDone(ex.id, setId, done, patch)}
                 onRemove={(setId) =>
-                  mutate(
-                    (d: AppData) => removeWorkoutSet(d, workout.id, ex.id, setId),
-                    'Set removed for today',
-                  )
+                  mutate((d: AppData) => removeWorkoutSet(d, workout.id, ex.id, setId))
                 }
-                onAdd={() =>
-                  mutate(
-                    (d: AppData) => addWorkoutSet(d, workout.id, ex.id, 'working'),
-                    'Working set added',
-                  )
-                }
+                onAdd={() => mutate((d: AppData) => addWorkoutSet(d, workout.id, ex.id, 'working'))}
               />
               <ExerciseFeedback
                 key={`${workout.id}:${ex.id}:${ex.exerciseId}`}

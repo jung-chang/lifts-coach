@@ -17,7 +17,6 @@ type Props = {
   onDone: (setId: string, done: boolean, patch?: Partial<WorkoutSet>) => void;
   onAdd?: () => void;
   onRemove?: (setId: string) => void;
-  onUndoRemove?: () => void;
 };
 
 function parseInput(field: Field, value: string, unit: Unit): number | null {
@@ -32,7 +31,7 @@ function parseInput(field: Field, value: string, unit: Unit): number | null {
   }
 }
 
-export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove, onUndoRemove }: Props) {
+export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove }: Props) {
   // Persisted values come directly from props. Only actual input edits enter
   // this buffer; an acknowledged edit therefore cannot mask later Undo/sync.
   const [drafts, setDrafts] = useState<Drafts>({});
@@ -392,25 +391,19 @@ export function SetTable({ exercise, unit, onEdit, onDone, onAdd, onRemove, onUn
             );
           })}
         </tbody>
-        {(onAdd || onRemove || onUndoRemove) && (
+        {onAdd && (
           <tfoot>
             <tr>
-              <td colSpan={4}>
-                {onUndoRemove && (
-                  <Button variant="ghost" onClick={onUndoRemove}>
-                    Undo
-                  </Button>
-                )}
-                {onAdd && (
-                  <Button
-                    variant="ghost"
-                    aria-label="Add set"
-                    title="Add set for today"
-                    onClick={onAdd}
-                  >
-                    <Plus size={18} aria-hidden="true" />
-                  </Button>
-                )}
+              <td colSpan={4} className="set-add-cell">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Add set"
+                  title="Add set for today"
+                  onClick={onAdd}
+                >
+                  <Plus size={18} aria-hidden="true" />
+                </Button>
               </td>
             </tr>
           </tfoot>

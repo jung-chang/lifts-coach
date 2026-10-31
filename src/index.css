@@ -2444,6 +2444,11 @@ summary {
 .swipe-set-table tfoot tr {
   display: block;
 }
+.compact-set-table .set-add-cell {
+  display: flex;
+  width: 100%;
+  justify-content: center;
+}
 @media (prefers-reduced-motion: reduce) {
   .swipe-set-table tbody tr > th,
   .swipe-set-table tbody tr > td {

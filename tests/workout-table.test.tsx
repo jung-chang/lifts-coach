@@ -46,26 +46,23 @@ afterEach(() => {
 });
 
 async function beginWorkout() {
-  render(<App />);
+  const view = render(<App />);
   fireEvent.click(screen.getByRole('button', { name: 'Start workout' }));
   await screen.findByRole('table', { name: /sets/i });
+  return view;
 }
 
 describe('workout set table', () => {
-  it('removes sets for today with Undo and preserves the routine across reload', async () => {
+  it('removes sets for today without Undo and preserves the routine across reload', async () => {
     await beginWorkout();
     const routines = structuredClone(fixture.data.routines);
-    const original = structuredClone(fixture.data.workouts[0].exercises[0].actualSets);
     const remove = (ordinal: number) => {
       fireEvent.focus(screen.getByRole('row', { name: `Set ${ordinal} actions` }));
       fireEvent.click(screen.getByRole('button', { name: `Delete set ${ordinal}` }));
     };
     remove(3);
     await waitFor(() => expect(fixture.data.workouts[0].exercises[0].actualSets).toHaveLength(2));
-    fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
-    await waitFor(() => expect(fixture.data.workouts[0].exercises[0].actualSets).toEqual(original));
-    remove(3);
-    await waitFor(() => expect(fixture.data.workouts[0].exercises[0].actualSets).toHaveLength(2));
+    expect(screen.queryByRole('button', { name: /Undo/ })).toBeNull();
     cleanup();
     render(<App />);
     expect(screen.queryByRole('textbox', { name: 'Set 3 reps' })).toBeNull();
@@ -323,7 +320,7 @@ describe('workout set table', () => {
   });
 
   it('adds a working set from beneath the table without changing the saved routine', async () => {
-    await beginWorkout();
+    const view = await beginWorkout();
     const routineBefore = structuredClone(fixture.data.routines);
     fireEvent.click(screen.getByRole('button', { name: 'Add set' }));
     await waitFor(() =>
@@ -334,8 +331,11 @@ describe('workout set table', () => {
       ).toHaveLength(4),
     );
     expect(fixture.data.routines).toEqual(routineBefore);
+    // The mocked store does not subscribe React to data changes.
+    view.rerender(<App />);
     expect(screen.getByRole('textbox', { name: 'Set 4 load' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Add set' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Undo/ })).toBeNull();
   });
 
   it('opens an expanded own-workout summary from history with every exercise visible', () => {
