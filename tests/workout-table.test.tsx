@@ -449,6 +449,36 @@ describe('workout set table', () => {
     expect(fixture.data.workouts[0].exercises[0].actualSets[0].weight).toBe(120);
     expect(fixture.data.workouts[0].restEndsAt).toBeUndefined();
   });
+  it('saves an adjusted duration for a resumed workout without changing its sets', async () => {
+    fixture.data = startWorkoutDomain(fixture.data, fixture.data.routines[0].id);
+    const workout = fixture.data.workouts[0];
+    const start = Date.now() - 4 * 60 * 60_000;
+    workout.startedAt = new Date(start).toISOString();
+    const set = workout.exercises[0].actualSets[0];
+    set.status = 'completed';
+    set.completedAt = new Date(start + 40 * 60_000).toISOString();
+    const exercises = structuredClone(workout.exercises);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Finish workout' }));
+    const editor = screen.getByRole('dialog', { name: 'Adjust workout duration' });
+    const duration = within(editor).getByRole('spinbutton', { name: 'Duration in minutes' });
+    fireEvent.change(duration, { target: { value: '241' } });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Save and finish' }));
+    expect(fixture.data.workouts[0].status).toBe('active');
+
+    fireEvent.change(duration, { target: { value: '55' } });
+    fireEvent.click(within(editor).getByRole('button', { name: 'Save and finish' }));
+    const summary = await screen.findByRole('dialog', { name: 'Workout saved' });
+    expect(within(summary).getByText(/55 minutes/)).toBeTruthy();
+    expect(fixture.data.workouts[0]).toMatchObject({
+      status: 'finished',
+      startedAt: workout.startedAt,
+      completedAt: new Date(start + 55 * 60_000).toISOString(),
+      exercises,
+    });
+  });
+
   it('ignores a stale active Done event queued after Finish', async () => {
     await beginWorkout();
     const lateDone = screen.getByRole('checkbox', { name: 'Set 1 done' });

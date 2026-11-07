@@ -624,12 +624,20 @@ export function finishWorkout(
   workoutId: string,
   feeling?: string,
   notes?: string,
+  durationMinutes?: number,
 ): AppData {
-  assert(
-    data.workouts.some((w) => w.id === workoutId && w.status === 'active'),
-    'Active workout not found',
-  );
+  const workout = data.workouts.find((w) => w.id === workoutId && w.status === 'active');
+  assert(workout, 'Active workout not found');
   const stamp = now();
+  let completedAt = stamp;
+  if (durationMinutes !== undefined) {
+    const end = Date.parse(workout.startedAt) + durationMinutes * 60_000;
+    assert(
+      Number.isInteger(durationMinutes) && durationMinutes > 0 && end <= Date.parse(stamp),
+      'Enter a duration between 1 minute and the elapsed workout time.',
+    );
+    completedAt = new Date(end).toISOString();
+  }
   return {
     ...data,
     workouts: data.workouts.map((w) =>
@@ -638,7 +646,7 @@ export function finishWorkout(
         : {
             ...w,
             status: 'finished',
-            completedAt: stamp,
+            completedAt,
             updatedAt: stamp,
             restEndsAt: undefined,
             restSetId: undefined,

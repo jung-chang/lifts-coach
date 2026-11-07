@@ -62,6 +62,7 @@ import { useAppStore } from './lib/store';
 import { Button } from './components/ui/Button';
 import { ProgressCalendar } from './components/ProgressCalendar';
 import { Sheet as Dialog } from './components/ui/Sheet';
+import { Input } from './components/ui/Input';
 import { ProposalCard } from './components/ProposalCard';
 import { Sheet } from './components/ui/Sheet';
 import { RoutineEditor } from './components/RoutineEditor';
@@ -655,12 +656,12 @@ function App() {
     setUndo(null);
     say('Undone');
   };
-  const finish = () => {
+  const finish = (durationMinutes?: number) => {
     if (!data || !workout) return;
     let suggestions: Proposal[] = [];
     let finishedSnapshot: Workout | undefined;
     void safeUpdate((d) => {
-      const finished = finishWorkout(d, workout.id);
+      const finished = finishWorkout(d, workout.id, undefined, undefined, durationMinutes);
       finishedSnapshot = finished.workouts.find((item) => item.id === workout.id);
       suggestions = progressionProposals(finished, workout.id);
       return { ...finished, proposals: [...finished.proposals, ...suggestions] };
@@ -1141,7 +1142,13 @@ function App() {
                   ) => toggleSetDone(workout!, exerciseId, setId, done, patch)}
                   timerNow={timerNow}
                   skipRest={skipRest}
-                  finish={finish}
+                  finish={() => {
+                    if (Date.now() - Date.parse(workout!.startedAt) > 3 * 60 * 60_000) {
+                      setModal('workout-duration');
+                    } else {
+                      finish();
+                    }
+                  }}
                   requestDiscard={() => setDiscardWorkoutRequested(workout!.id)}
                   say={say}
                   mutate={mutate}
@@ -1707,6 +1714,42 @@ function App() {
               </Button>
             </div>
           </div>
+        )}
+      </Dialog>
+      <Dialog
+        open={modal === 'workout-duration' && workout?.status === 'active'}
+        onOpenChange={(open) => !open && setModal('')}
+        title="Adjust workout duration"
+        description="This workout has been running for more than 3 hours. Enter how long you trained, then save it."
+      >
+        {workout && (
+          <form
+            className="stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              finish(Number(new FormData(event.currentTarget).get('duration')));
+            }}
+          >
+            <label htmlFor="workout-duration">Duration in minutes</label>
+            <Input
+              id="workout-duration"
+              name="duration"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              max={Math.floor((Date.now() - Date.parse(workout.startedAt)) / 60_000)}
+              step={1}
+              required
+            />
+            <div className="dialog-footer">
+              <Button type="button" onClick={() => setModal('')}>
+                Cancel
+              </Button>
+              <Button type="submit" variant="primary">
+                Save and finish
+              </Button>
+            </div>
+          </form>
         )}
       </Dialog>
       <Dialog
