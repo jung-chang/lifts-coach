@@ -7,16 +7,25 @@ export type SheetProps = {
   onOpenChange: (open: boolean) => void;
   title: string;
   description?: string;
+  onCloseAutoFocus?: (event: Event) => void;
   children: ReactNode;
 };
 
-export function Sheet({ open, onOpenChange, title, description, children }: SheetProps) {
+export function Sheet({
+  open,
+  onOpenChange,
+  title,
+  description,
+  onCloseAutoFocus,
+  children,
+}: SheetProps) {
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>
       <DialogPrimitive.Portal>
         <DialogPrimitive.Overlay className="context-sheet-overlay" />
         <DialogPrimitive.Content
           className="context-sheet-content"
+          onCloseAutoFocus={onCloseAutoFocus}
           {...(!description ? { 'aria-describedby': undefined } : {})}
         >
           <div className="context-sheet-handle" aria-hidden="true">

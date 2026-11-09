@@ -779,7 +779,7 @@ describe('community backend authorization and publication', () => {
     db.db.close();
   });
 
-  it('paginates only a selected profile’s shared workout history and denies blocked reads', async () => {
+  it('paginates shared history, exposes all shared calendar entries in a month, and enforces blocks', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => Response.json(jwks)),
@@ -798,11 +798,20 @@ describe('community backend authorization and publication', () => {
     ).json()) as any;
     const data = finishedData(),
       template = data.workouts[0];
-    data.workouts = Array.from({ length: 6 }, (_, i) => ({
+    data.workouts = Array.from({ length: 7 }, (_, i) => ({
       ...structuredClone(template),
       id: `history-${i}`,
       startedAt: consent.sharing.enabledAt,
       completedAt: new Date(Date.now() + i).toISOString(),
+      trainingDate: '2026-10-03',
+      ...(i === 6
+        ? {
+            communityVisibility: {
+              visibility: 'private',
+              policyRevision: consent.sharing.policyRevision,
+            },
+          }
+        : {}),
     }));
     expect(
       (
@@ -828,9 +837,32 @@ describe('community backend authorization and publication', () => {
     ).json()) as any;
     expect(next.items).toHaveLength(1);
     expect(next.nextCursor).toBeNull();
-    expect(new Set([...page.workouts, ...next.items].map((w: any) => w.id)).size).toBe(6);
+    const sharedIds = new Set([...page.workouts, ...next.items].map((w: any) => w.id));
+    expect(sharedIds.size).toBe(6);
+    const calendarPath = `${path}/calendar?month=2026-10`;
+    const calendar = (await (await call(db, member, calendarPath)).json()) as any;
+    expect(new Set(calendar.items.map((w: any) => w.id))).toEqual(sharedIds);
+    expect(calendar.items).toHaveLength(6);
+    for (const workout of calendar.items)
+      expect(workout).toEqual({
+        id: expect.any(String),
+        title: template.name,
+        trainingDate: '2026-10-03',
+      });
+    expect(await (await call(db, member, `${path}/calendar?month=2026-09`)).json()).toEqual({
+      items: [],
+    });
+    expect((await call(db, member, `${path}/calendar?month=2026-13`)).status).toBe(400);
     await call(db, member, `${path}/block`, 'POST');
     expect((await call(db, member, `${path}/workouts`)).status).toBe(404);
+    expect((await call(db, member, calendarPath)).status).toBe(404);
+    expect(await (await call(db, member, '/api/community/blocked')).json()).toEqual({
+      items: [{ publicId: session.profile.publicId, displayName: session.profile.displayName }],
+    });
+    expect(await (await call(db, owner, '/api/community/blocked')).json()).toEqual({ items: [] });
+    expect((await call(db, member, `${path}/block`, 'DELETE')).status).toBe(204);
+    expect(await (await call(db, member, '/api/community/blocked')).json()).toEqual({ items: [] });
+    expect((await call(db, member, calendarPath)).status).toBe(200);
     db.db.close();
   });
 

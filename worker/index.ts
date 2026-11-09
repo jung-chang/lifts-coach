@@ -687,6 +687,7 @@ async function feedItems(
         trainingTimezone: row.trainingTimezone,
       },
       activityAt: row.activityAt,
+      trainingDate: row.trainingDate,
       title:
         row.sharedTitle ||
         (personalRecords.revision === row.sourceRevision
@@ -867,6 +868,34 @@ app.get('/api/community/profiles/:publicId/workouts', async (c) => {
     }
   return c.json(await feedItems(c.env, c.get('accountId'), target.accountId, before));
 });
+app.get('/api/community/profiles/:publicId/calendar', async (c) => {
+  const month = c.req.query('month');
+  if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month))
+    return c.json({ error: 'Invalid calendar month.' }, 400);
+  const viewer = c.get('accountId');
+  const target = await c.env.DB.prepare(
+    "SELECT p.account_id accountId FROM profiles p JOIN accounts a ON a.id=p.account_id AND a.status='active' WHERE p.public_id=?",
+  )
+    .bind(c.req.param('publicId'))
+    .first<{ accountId: string }>();
+  if (!target || (await mutualBlock(c.env, viewer, target.accountId)))
+    return c.json({ error: 'Profile unavailable.' }, 404);
+  const workouts = await c.env.DB.prepare(
+    `SELECT p.id,COALESCE(NULLIF(p.shared_title,''),'Workout') title,tw.training_date trainingDate
+     FROM training_workouts tw JOIN workout_publications p USING(account_id,workout_id)
+     JOIN workout_visibility v USING(account_id,workout_id)
+     JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision>=tw.source_revision
+     JOIN account_state ast ON ast.account_id=tw.account_id AND ast.revision=ps.source_revision
+     JOIN accounts a ON a.id=tw.account_id AND a.status='active'
+     WHERE tw.account_id=? AND tw.training_date BETWEEN ? AND ? AND v.visibility='community'
+     AND NOT EXISTS(SELECT 1 FROM account_blocks b WHERE (b.account_id=? AND b.blocked_account_id=tw.account_id) OR (b.account_id=tw.account_id AND b.blocked_account_id=?))
+     AND EXISTS(SELECT 1 FROM training_sets ts WHERE ts.account_id=tw.account_id AND ts.workout_id=tw.workout_id AND ts.kind='working')
+     ORDER BY tw.training_date,tw.started_at,p.id`,
+  )
+    .bind(target.accountId, `${month}-01`, `${month}-31`, viewer, viewer)
+    .all();
+  return c.json({ items: workouts.results });
+});
 app.get('/api/community/workouts/:publicationId', async (c) => {
   const row = await c.env.DB.prepare(
     "SELECT p.account_id accountId,p.workout_id workoutId,p.shared_title sharedTitle,p.activity_at activityAt,pr.public_id publicId,pr.display_name displayName,pr.training_timezone trainingTimezone,tw.started_at startedAt,tw.completed_at completedAt,ps.source_revision sourceRevision FROM workout_publications p JOIN workout_visibility v USING(account_id,workout_id) JOIN training_workouts tw USING(account_id,workout_id) JOIN training_projection_state ps ON ps.account_id=tw.account_id AND ps.source_revision>=tw.source_revision JOIN account_state ast ON ast.account_id=p.account_id AND ast.revision=ps.source_revision JOIN accounts a ON a.id=p.account_id AND a.status='active' JOIN profiles pr ON pr.account_id=p.account_id WHERE p.id=? AND v.visibility='community'",
@@ -1002,6 +1031,14 @@ app.post('/api/me/hide-workouts', async (c) => {
     .bind(now, a)
     .run();
   return c.body(null, 204);
+});
+app.get('/api/community/blocked', async (c) => {
+  const blocked = await c.env.DB.prepare(
+    'SELECT p.public_id publicId,p.display_name displayName FROM account_blocks b JOIN profiles p ON p.account_id=b.blocked_account_id WHERE b.account_id=? ORDER BY p.display_name COLLATE NOCASE,p.public_id',
+  )
+    .bind(c.get('accountId'))
+    .all();
+  return c.json({ items: blocked.results });
 });
 app.post('/api/community/profiles/:publicId/block', async (c) => {
   const target = await c.env.DB.prepare(

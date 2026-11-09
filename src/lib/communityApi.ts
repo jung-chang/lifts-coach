@@ -1,5 +1,7 @@
 import type {
   AccountSession,
+  BlockedProfile,
+  CalendarWorkout,
   FeedPage,
   ProfileDetail,
   PublicProfile,
@@ -25,12 +27,15 @@ const isProfile = (value: unknown) => {
 };
 const modes = ['external', 'per-dumbbell', 'bodyweight', 'assistance'];
 const isMode = (value: unknown) => typeof value === 'string' && modes.includes(value);
+const isTrainingDate = (value: unknown) =>
+  typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
 const isFeedItem = (value: unknown) =>
   isRecord(value) &&
   typeof value.id === 'string' &&
   isProfile(value.profile) &&
   typeof value.activityAt === 'string' &&
   Number.isFinite(Date.parse(value.activityAt)) &&
+  (value.trainingDate === undefined || isTrainingDate(value.trainingDate)) &&
   typeof value.title === 'string' &&
   (value.hasRecord === undefined || typeof value.hasRecord === 'boolean') &&
   Number.isFinite(value.exerciseCount) &&
@@ -39,6 +44,26 @@ const isFeedItem = (value: unknown) =>
   Array.isArray(value.exerciseNames) &&
   value.exerciseNames.every((name) => typeof name === 'string');
 const validResponse = (path: string, value: unknown) => {
+  if (path === '/api/community/blocked')
+    return (
+      isRecord(value) &&
+      Array.isArray(value.items) &&
+      value.items.every(
+        (p) => isRecord(p) && typeof p.publicId === 'string' && typeof p.displayName === 'string',
+      )
+    );
+  if (/\/community\/profiles\/[^/]+\/calendar\?/.test(path))
+    return (
+      isRecord(value) &&
+      Array.isArray(value.items) &&
+      value.items.every(
+        (w) =>
+          isRecord(w) &&
+          typeof w.id === 'string' &&
+          typeof w.title === 'string' &&
+          isTrainingDate(w.trainingDate),
+      )
+    );
   if (path.includes('/community/profiles/') && path.includes('/block')) return isRecord(value);
   if (
     path.includes('/community/feed') ||
@@ -217,6 +242,19 @@ export const getProfileWorkouts = (
     accountId,
     { signal },
   );
+export const getProfileCalendar = (
+  accountId: string,
+  publicId: string,
+  month: string,
+  signal?: AbortSignal,
+) =>
+  json<{ items: CalendarWorkout[] }>(
+    `/api/community/profiles/${encodeURIComponent(publicId)}/calendar?month=${encodeURIComponent(month)}`,
+    accountId,
+    { signal },
+  );
+export const getBlockedProfiles = (accountId: string, signal?: AbortSignal) =>
+  json<{ items: BlockedProfile[] }>('/api/community/blocked', accountId, { signal });
 export const patchProfile = (
   accountId: string,
   body: { displayName: string; trainingTimezone: string },
@@ -250,7 +288,7 @@ export const blockProfile = (
   block: boolean,
   signal?: AbortSignal,
 ) =>
-  json<{ ok: true }>(`/api/community/profiles/${encodeURIComponent(publicId)}/block`, accountId, {
+  json<void>(`/api/community/profiles/${encodeURIComponent(publicId)}/block`, accountId, {
     method: block ? 'POST' : 'DELETE',
     signal,
   });

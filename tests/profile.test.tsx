@@ -53,17 +53,25 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
-it('keeps the profile minimal and opens the reusable stats and history views', () => {
+it('shows the owner’s calendar and weekly volume, and opens the reusable stats and history views', () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-11-04T12:00:00Z'));
   const p = props();
   render(<OwnProfileScreen {...p} />);
   expect(screen.getByRole('heading', { name: 'Alex Example', level: 1 })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Edit display name' })).toBeTruthy();
   expect(screen.getAllByRole('switch')).toHaveLength(1);
   expect(screen.queryByText(session.email)).toBeNull();
-  expect(screen.queryByRole('heading', { name: 'Weekly volume' })).toBeNull();
+  expect(screen.getByRole('heading', { name: 'Weekly volume' })).toBeTruthy();
+  expect(screen.getByText('1 set this week')).toBeTruthy();
+  const calendar = screen.getByRole('region', { name: 'Workout calendar' });
+  fireEvent.click(within(calendar).getByRole('button', { name: 'Synthetic profile workout' }));
+  expect(p.onWorkout).toHaveBeenCalledWith(p.data.workouts[0].id);
+  p.onWorkout.mockClear();
   expect(screen.queryByRole('checkbox')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: /Exercise stats/ }));
   expect(screen.getByLabelText('Choose an exercise')).toBeTruthy();
@@ -73,6 +81,28 @@ it('keeps the profile minimal and opens the reusable stats and history views', (
   expect(p.onWorkout).toHaveBeenCalledWith(p.data.workouts[0].id);
   fireEvent.click(screen.getByRole('button', { name: 'Repeat' }));
   expect(p.onRepeat).toHaveBeenCalledWith(p.data.workouts[0].id);
+});
+
+it('lists blocked profiles and keeps failed unblock actions retryable', async () => {
+  const fetchMock = vi
+    .spyOn(globalThis, 'fetch')
+    .mockResolvedValueOnce(
+      Response.json({ items: [{ publicId: 'blocked-id', displayName: 'Blocked Example' }] }),
+    )
+    .mockResolvedValueOnce(new Response(null, { status: 500 }))
+    .mockResolvedValueOnce(new Response(null, { status: 204 }));
+  render(<OwnProfileScreen {...props()} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Blocked profiles' }));
+  const dialog = within(screen.getByRole('dialog', { name: 'Blocked profiles' }));
+  const unblock = await dialog.findByRole('button', { name: 'Unblock Blocked Example' });
+  fireEvent.click(unblock);
+  await dialog.findByRole('alert');
+  fireEvent.click(unblock);
+  await dialog.findByText('You haven’t blocked any profiles.');
+  expect(fetchMock).toHaveBeenLastCalledWith(
+    '/api/community/profiles/blocked-id/block',
+    expect.objectContaining({ method: 'DELETE' }),
+  );
 });
 
 it('edits only the display name through the pencil surface', async () => {

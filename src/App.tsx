@@ -61,6 +61,7 @@ import type {
 import { useAppStore } from './lib/store';
 import { Button } from './components/ui/Button';
 import { ProgressCalendar } from './components/ProgressCalendar';
+import { WeeklyVolume, workoutWeeks } from './components/WeeklyVolume';
 import { Sheet as Dialog } from './components/ui/Sheet';
 import { Input } from './components/ui/Input';
 import { ProposalCard } from './components/ProposalCard';
@@ -93,7 +94,7 @@ import { exerciseStatsFromWorkouts } from '../shared/trainingStats';
 import { personalRecordsFromWorkouts } from '../shared/personalRecords';
 import { WorkoutRecords } from './components/PersonalRecords';
 import type { AccountSession } from '../shared/community';
-import { mondayOfDate, recentMondayDates, trainingDateAt } from '../shared/trainingDates';
+import { trainingDateAt } from '../shared/trainingDates';
 import './shell.css';
 import { addSampleRoutine } from './lib/sampleRoutine';
 import {
@@ -2319,7 +2320,6 @@ function ProgressScreen({
     setView(next);
     window.scrollTo({ top: 0 });
   };
-  const finished = (data.workouts as Workout[]).filter((w) => w.status === 'finished');
   const stats = useMemo(
     () => exerciseStatsFromWorkouts(data.workouts, data.exercises),
     [data.workouts, data.exercises],
@@ -2328,18 +2328,6 @@ function ProgressScreen({
     () => historyItemsFromWorkouts(data.workouts, data.exercises),
     [data.workouts, data.exercises],
   );
-  const weeks = recentMondayDates(timezone).map((start) => ({
-    label: `${Number(start.slice(5, 7))}/${Number(start.slice(8, 10))}`,
-    count: finished
-      .filter(
-        (w) =>
-          mondayOfDate(
-            w.trainingDate ?? trainingDateAt(w.startedAt, w.trainingTimezone ?? timezone),
-          ) === start,
-      )
-      .reduce((total, w) => total + completedSets(w), 0),
-  }));
-  const max = Math.max(1, ...weeks.map((w) => w.count));
   return (
     <main className="page">
       {view !== 'overview' && (
@@ -2361,42 +2349,8 @@ function ProgressScreen({
       {view === 'overview' && (
         <>
           <div className="grid two-col progress-overview">
-            <ProgressCalendar workouts={finished} onWorkout={onWorkout} />
-            <section className="card card-pad">
-              <h2>Weekly volume</h2>
-              <p className="muted small">Completed working sets · Monday–Sunday</p>
-              {finished.length ? (
-                <>
-                  <div
-                    className="chart"
-                    role="img"
-                    aria-label={`Completed working sets per week: ${weeks.map((w) => `${w.label}: ${w.count}`).join(', ')}`}
-                  >
-                    {weeks.map((w) => (
-                      <div className="chart-col" key={w.label}>
-                        <span className="small tabular">{w.count}</span>
-                        <div
-                          className="chart-bar"
-                          style={{
-                            height: `${w.count ? Math.max(8, (w.count / max) * 67) : 2}%`,
-                            opacity: w.count ? 1 : 0.18,
-                          }}
-                        />
-                        <span className="chart-label">{w.label}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="row space-between" style={{ marginTop: 13 }}>
-                    <span className="muted small">Last 8 weeks · week of</span>
-                    <span className="small">{weeks.at(-1)?.count} sets this week</span>
-                  </div>
-                </>
-              ) : (
-                <p className="progress-empty muted small">
-                  Weekly volume will appear after your first completed workout.
-                </p>
-              )}
-            </section>
+            <ProgressCalendar workouts={data.workouts} onWorkout={onWorkout} timeZone={timezone} />
+            <WeeklyVolume weeks={workoutWeeks(data.workouts, timezone)} timeZone={timezone} />
           </div>
           <TrainingLinks onStats={() => openView('stats')} onHistory={() => openView('history')} />
         </>

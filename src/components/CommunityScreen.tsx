@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEventHandler } from 'react';
 import { ArrowLeft, Users, RefreshCw, Pencil, Search, Settings } from 'lucide-react';
 import type {
   AccountSession,
+  BlockedProfile,
+  CalendarWorkout,
   FeedItem,
   ProfileDetail,
   PublicProfile,
@@ -17,8 +19,10 @@ import { MakeWorkoutPrivate } from './MakeWorkoutPrivate';
 import { WorkoutPreviewCard } from './WorkoutPreviewCard';
 import {
   blockProfile,
+  getBlockedProfiles,
   getFeed,
   getProfile,
+  getProfileCalendar,
   getProfileWorkouts,
   getWorkout,
   hideWorkouts,
@@ -27,7 +31,7 @@ import {
   searchPeople,
 } from '../lib/communityApi';
 import { toDisplayWeight } from '../../shared/domain';
-import { recentMondayDates } from '../../shared/trainingDates';
+import { recentMondayDates, trainingDateAt } from '../../shared/trainingDates';
 import { exerciseStatsFromWorkouts } from '../../shared/trainingStats';
 import {
   ExerciseStats,
@@ -36,6 +40,13 @@ import {
   historyItemsFromWorkouts,
 } from './TrainingHistory';
 import { Sheet } from './ui/Sheet';
+import {
+  initialCalendarSelection,
+  ProgressCalendar,
+  WorkoutCalendar,
+  type CalendarSelection,
+} from './ProgressCalendar';
+import { WeeklyVolume, workoutWeeks } from './WeeklyVolume';
 import '../community.css';
 import '../profile.css';
 
@@ -50,7 +61,7 @@ type CommunityProps = {
 type View =
   | { kind: 'feed' }
   | { kind: 'people' }
-  | { kind: 'profile'; id: string; section?: 'overview' | 'stats' | 'history' }
+  | { kind: 'profile'; id: string; section?: ProfileSection; calendar?: CalendarSelection }
   | { kind: 'workout'; id: string }
   | { kind: 'compare'; id: string };
 const initials = (name: string) =>
@@ -63,8 +74,19 @@ const initials = (name: string) =>
 const displayLoad = (mode: LoadMode, pounds: number, unit: Unit) =>
   formatLoadValue(mode, toDisplayWeight(pounds, unit), unit);
 const abortError = (e: unknown) => e instanceof DOMException && e.name === 'AbortError';
+const restoreFocus = (event: Event, trigger: HTMLButtonElement | null) => {
+  if (!trigger?.isConnected) return;
+  event.preventDefault();
+  trigger.focus();
+};
 
-function Avatar({ profile, small = false }: { profile: PublicProfile; small?: boolean }) {
+function Avatar({
+  profile,
+  small = false,
+}: {
+  profile: Pick<PublicProfile, 'displayName'>;
+  small?: boolean;
+}) {
   return (
     <span
       className={`community-avatar${small ? ' community-avatar-small' : ''}`}
@@ -93,6 +115,96 @@ function Failure({ message, retry }: { message: string; retry: () => void }) {
   );
 }
 
+function BlockedProfilesSheet({
+  accountId,
+  trigger,
+  onClose,
+  onUnblocked,
+}: {
+  accountId: string;
+  trigger: HTMLButtonElement | null;
+  onClose: () => void;
+  onUnblocked?: (id: string) => void;
+}) {
+  const [items, setItems] = useState<BlockedProfile[] | null>(null);
+  const [retry, setRetry] = useState(0);
+  const [loadError, setLoadError] = useState('');
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState('');
+  const [status, setStatus] = useState('');
+  const active = useRef<AbortController | null>(null);
+  useEffect(() => {
+    const controller = new AbortController();
+    active.current = controller;
+    setLoadError('');
+    void getBlockedProfiles(accountId, controller.signal)
+      .then(({ items }) => {
+        if (!controller.signal.aborted) setItems(items);
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setLoadError('Could not load blocked profiles.');
+      });
+    return () => controller.abort();
+  }, [accountId, retry]);
+  const unblock = async (profile: BlockedProfile) => {
+    const controller = active.current;
+    if (!controller || pendingId) return;
+    setPendingId(profile.publicId);
+    setActionError('');
+    setStatus('');
+    try {
+      await blockProfile(accountId, profile.publicId, false);
+      if (controller.signal.aborted) return;
+      setItems(
+        (previous) => previous?.filter((item) => item.publicId !== profile.publicId) ?? null,
+      );
+      setStatus(`${profile.displayName} unblocked.`);
+      onUnblocked?.(profile.publicId);
+    } catch {
+      if (!controller.signal.aborted)
+        setActionError(`Could not unblock ${profile.displayName}. Try again.`);
+    } finally {
+      if (!controller.signal.aborted) setPendingId(null);
+    }
+  };
+  return (
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title="Blocked profiles"
+      onCloseAutoFocus={(event) => restoreFocus(event, trigger)}
+    >
+      {loadError ? (
+        <Failure message={loadError} retry={() => setRetry((n) => n + 1)} />
+      ) : items === null ? (
+        <Busy text="Loading blocked profiles…" />
+      ) : items.length === 0 ? (
+        <p className="muted">You haven’t blocked any profiles.</p>
+      ) : (
+        <ul className="blocked-profiles-list">
+          {items.map((person) => (
+            <li key={person.publicId}>
+              <Avatar profile={person} small />
+              <span>{person.displayName}</span>
+              <Button
+                aria-label={`Unblock ${person.displayName}`}
+                disabled={pendingId !== null}
+                onClick={() => void unblock(person)}
+              >
+                {pendingId === person.publicId ? 'Unblocking…' : 'Unblock'}
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {actionError && <p role="alert">{actionError}</p>}
+      {status && <p role="status">{status}</p>}
+    </Sheet>
+  );
+}
+
 export function CommunityScreen({ session, unit, onSettings, initialProfileId }: CommunityProps) {
   const accountId = session?.accountId ?? '';
   const [view, setView] = useState<View>(
@@ -113,6 +225,12 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
   const [blocked, setBlocked] = useState(false);
+  const [showBlockedProfiles, setShowBlockedProfiles] = useState(false);
+  const [confirmBlock, setConfirmBlock] = useState(false);
+  const [blockPending, setBlockPending] = useState(false);
+  const [blockError, setBlockError] = useState('');
+  const blockTrigger = useRef<HTMLButtonElement | null>(null);
+  const blockedProfilesTrigger = useRef<HTMLButtonElement | null>(null);
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const feedScrollY = useRef(0);
   const workoutReturn = useRef<View>({ kind: 'feed' });
@@ -141,6 +259,10 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
     if (view.kind === 'feed' && next.kind !== 'feed') feedScrollY.current = window.scrollY;
     if (next.kind === 'feed' && view.kind !== 'feed') setFeedFetched(false);
     setBlocked(false);
+    setShowBlockedProfiles(false);
+    setConfirmBlock(false);
+    setBlockPending(false);
+    setBlockError('');
     setView(next);
     setProfile(null);
     setComparePeer(null);
@@ -236,6 +358,10 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
     setDetailError('');
     setQuery('');
     setBlocked(false);
+    setShowBlockedProfiles(false);
+    setConfirmBlock(false);
+    setBlockPending(false);
+    setBlockError('');
     setView({ kind: 'feed' });
   }, [accountId]);
   useEffect(() => {
@@ -267,6 +393,8 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
       setWorkout(null);
       setDetailLoading(false);
       setDetailError('');
+      setShowBlockedProfiles(false);
+      setConfirmBlock(false);
     };
     window.addEventListener('online', online);
     window.addEventListener('offline', offline);
@@ -366,26 +494,36 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
     );
   }, [view.kind, feedFetched]);
 
-  const openWorkout = (id: string) => {
+  const openWorkout = (id: string, calendar?: CalendarSelection) => {
     workoutReturn.current =
-      view.kind === 'profile' ? { ...view, section: 'history' } : { kind: 'feed' };
+      view.kind === 'profile'
+        ? { ...view, section: calendar ? 'overview' : 'history', calendar }
+        : { kind: 'feed' };
     go({ kind: 'workout', id });
   };
   const onBlock = async () => {
-    if (!accountId || view.kind !== 'profile' || !profile) return;
+    if (!accountId || view.kind !== 'profile' || !profile || blockPending || !isOnline) return;
     const requestView = view;
+    setBlockPending(true);
+    setBlockError('');
     try {
       await blockProfile(accountId, view.id, true);
       if (accountIdRef.current !== accountId || !isOnlineRef.current) return;
       if (viewRef.current === requestView) {
         setBlocked(true);
+        setConfirmBlock(false);
         setProfile(null);
       }
+      cancelFeedRequest();
+      setFeedFetched(false);
       setFeed((items) => items.filter((item) => item.profile.publicId !== view.id));
       setPeople((items) => items.filter((person) => person.publicId !== view.id));
     } catch (error) {
       if (accountIdRef.current === accountId && viewRef.current === requestView)
-        setDetailError(error instanceof Error ? error.message : 'Could not block this profile.');
+        setBlockError(error instanceof Error ? error.message : 'Could not block this profile.');
+    } finally {
+      if (accountIdRef.current === accountId && viewRef.current === requestView)
+        setBlockPending(false);
     }
   };
   const back = () => {
@@ -547,14 +685,25 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
           {detailLoading && <Busy text="Loading profile…" />}
           {detailError && <Failure message={detailError} retry={() => setView({ ...view })} />}
           {blocked && (
-            <p className="community-note" role="status">
-              This profile is blocked. Its community details have been cleared from this view.
-            </p>
+            <>
+              <p className="community-note" role="status">
+                This profile is blocked.
+              </p>
+              <Button
+                onClick={(event) => {
+                  blockedProfilesTrigger.current = event.currentTarget;
+                  setShowBlockedProfiles(true);
+                }}
+              >
+                Blocked profiles
+              </Button>
+            </>
           )}
           {profile && (
             <ProfileContent
               accountId={accountId}
               initialView={view.kind === 'profile' ? view.section : undefined}
+              initialCalendar={view.kind === 'profile' ? view.calendar : undefined}
               detail={profile}
               comparePeer={comparePeer}
               unit={unit}
@@ -566,11 +715,14 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
                   : undefined
               }
               onBlock={
-                view.kind === 'profile' && view.id !== session.profile.publicId && !blocked
-                  ? onBlock
+                view.kind === 'profile' && view.id !== session.profile.publicId
+                  ? (event) => {
+                      blockTrigger.current = event.currentTarget;
+                      setBlockError('');
+                      setConfirmBlock(true);
+                    }
                   : undefined
               }
-              blocked={blocked}
               compare={view.kind === 'compare'}
               myName={session.profile.displayName}
             />
@@ -598,6 +750,36 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
           )}
         </section>
       )}
+      <Sheet
+        open={confirmBlock && !!profile}
+        onOpenChange={(open) => {
+          if (!blockPending) setConfirmBlock(open);
+        }}
+        title={`Block ${profile?.profile.displayName ?? 'this profile'}?`}
+        description="You’ll both stop seeing each other’s profiles and workouts in Community. You can unblock this profile later."
+        onCloseAutoFocus={(event) => restoreFocus(event, blockTrigger.current)}
+      >
+        {blockError && <p role="alert">{blockError}</p>}
+        <div className="sheet-actions">
+          <Button onClick={() => setConfirmBlock(false)} disabled={blockPending}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={() => void onBlock()} disabled={blockPending}>
+            {blockPending ? 'Blocking…' : 'Block profile'}
+          </Button>
+        </div>
+      </Sheet>
+      {showBlockedProfiles && (
+        <BlockedProfilesSheet
+          key={accountId}
+          accountId={accountId}
+          trigger={blockedProfilesTrigger.current}
+          onClose={() => setShowBlockedProfiles(false)}
+          onUnblocked={(id) => {
+            if (view.kind === 'profile' && view.id === id) go({ kind: 'profile', id });
+          }}
+        />
+      )}
     </main>
   );
 }
@@ -610,26 +792,38 @@ function ProfileContent({
   own,
   onCompare,
   onBlock,
-  blocked,
   compare,
   myName,
   accountId,
   initialView = 'overview',
+  initialCalendar,
 }: {
   detail: ProfileDetail;
   comparePeer: ProfileDetail | null;
   unit: Unit;
-  onWorkout: (id: string) => void;
+  onWorkout: (id: string, calendar?: CalendarSelection) => void;
   own: boolean;
   onCompare?: () => void;
-  onBlock?: () => void;
-  blocked: boolean;
+  onBlock?: MouseEventHandler<HTMLButtonElement>;
   compare: boolean;
   myName: string;
   accountId: string;
   initialView?: ProfileSection;
+  initialCalendar?: CalendarSelection;
 }) {
   const [section, setSection] = useState<ProfileSection>(initialView);
+  const timeZone = detail.profile.trainingTimezone;
+  const [calendar, setCalendar] = useState(() => {
+    const latest = detail.workouts[0];
+    return (
+      initialCalendar ??
+      initialCalendarSelection(
+        timeZone,
+        latest && (latest.trainingDate ?? trainingDateAt(latest.activityAt, timeZone)),
+      )
+    );
+  });
+  const statsVisible = detail.statsVisible ?? detail.scope === 'all-history';
   const [items, setItems] = useState(detail.workouts);
   const [cursor, setCursor] = useState(detail.nextWorkoutCursor ?? null);
   const [loading, setLoading] = useState(false);
@@ -691,7 +885,7 @@ function ProfileContent({
             {compare
               ? `Compared with ${myName}`
               : detail.scope === 'all-history'
-                ? 'All-history summary'
+                ? 'All-history stats · shared workout calendar'
                 : 'Shared workouts only'}
           </p>
         </div>
@@ -717,14 +911,23 @@ function ProfileContent({
             </>
           )}
           {section === 'overview' && (
-            <TrainingLinks
-              onStats={() => go('stats')}
-              onHistory={() => go('history')}
-              historyDescription="Shared completed workouts"
-            />
+            <>
+              <div className="grid two-col progress-overview">
+                <SharedProfileCalendar
+                  accountId={accountId}
+                  publicId={detail.profile.publicId}
+                  timeZone={timeZone}
+                  selection={calendar}
+                  onSelectionChange={setCalendar}
+                  onWorkout={(id) => onWorkout(id, calendar)}
+                />
+                <WeeklyVolume weeks={statsVisible ? detail.weeks : null} timeZone={timeZone} />
+              </div>
+              <TrainingLinks onStats={() => go('stats')} onHistory={() => go('history')} />
+            </>
           )}
           {section === 'stats' &&
-            ((detail.statsVisible ?? detail.scope === 'all-history') ? (
+            (statsVisible ? (
               <ExerciseStats
                 stats={detail.exerciseStats ?? []}
                 unit={unit}
@@ -740,6 +943,7 @@ function ProfileContent({
                 id: w.id,
                 title: w.title,
                 date: w.activityAt,
+                trainingDate: w.trainingDate,
                 durationMinutes: w.durationMinutes,
                 setCount: w.setCount,
                 exerciseCount: w.exerciseCount,
@@ -754,20 +958,74 @@ function ProfileContent({
           {error && <p role="alert">{error}</p>}
           {section === 'overview' && !own && (
             <div className="community-options">
-              {onCompare && (detail.statsVisible ?? detail.scope === 'all-history') && (
-                <Button onClick={onCompare}>Compare training</Button>
-              )}
+              {onCompare && statsVisible && <Button onClick={onCompare}>Compare training</Button>}
               {onBlock && (
                 <Button variant="ghost" onClick={onBlock}>
                   Block profile
                 </Button>
               )}
-              {blocked && <p role="status">Profile blocked.</p>}
             </div>
           )}
         </>
       )}
     </div>
+  );
+}
+
+function SharedProfileCalendar({
+  accountId,
+  publicId,
+  timeZone,
+  selection,
+  onSelectionChange,
+  onWorkout,
+}: {
+  accountId: string;
+  publicId: string;
+  timeZone: string;
+  selection: CalendarSelection;
+  onSelectionChange: (selection: CalendarSelection) => void;
+  onWorkout: (id: string) => void;
+}) {
+  const { month } = selection;
+  const [result, setResult] = useState<{
+    month: string;
+    items: CalendarWorkout[];
+    failed?: boolean;
+  }>();
+  const [retry, setRetry] = useState(0);
+  useEffect(() => {
+    const controller = new AbortController();
+    setResult(undefined);
+    void getProfileCalendar(accountId, publicId, month, controller.signal)
+      .then(({ items }) => {
+        if (!controller.signal.aborted) setResult({ month, items });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setResult({ month, items: [], failed: true });
+      });
+    return () => controller.abort();
+  }, [accountId, publicId, month, retry]);
+  const current = result?.month === month ? result : undefined;
+  return (
+    <WorkoutCalendar
+      workouts={current?.items ?? []}
+      timeZone={timeZone}
+      selection={selection}
+      onSelectionChange={onSelectionChange}
+      onWorkout={onWorkout}
+      shared
+      status={
+        current?.failed ? (
+          <Failure
+            message="Could not load the workout calendar."
+            retry={() => setRetry((n) => n + 1)}
+          />
+        ) : !current ? (
+          <Busy text="Loading calendar…" />
+        ) : undefined
+      }
+    />
   );
 }
 function CompareContent({
@@ -999,6 +1257,8 @@ export function OwnProfileScreen({
   );
   const [editing, setEditing] = useState(false);
   const [settings, setSettings] = useState(false);
+  const [showBlockedProfiles, setShowBlockedProfiles] = useState(false);
+  const blockedProfilesTrigger = useRef<HTMLButtonElement | null>(null);
   const [name, setName] = useState(session?.profile.displayName ?? '');
   const [timezone, setTimezone] = useState(session?.profile.trainingTimezone ?? 'UTC');
   const [shared, setShared] = useState(session?.sharing.autoPublishWorkouts ?? false);
@@ -1095,6 +1355,17 @@ export function OwnProfileScreen({
       )}
       {view === 'overview' && (
         <>
+          <div className="grid two-col progress-overview">
+            <ProgressCalendar
+              workouts={data.workouts}
+              timeZone={session.profile.trainingTimezone}
+              onWorkout={onWorkout}
+            />
+            <WeeklyVolume
+              weeks={workoutWeeks(data.workouts, session.profile.trainingTimezone)}
+              timeZone={session.profile.trainingTimezone}
+            />
+          </div>
           <TrainingLinks onStats={() => go('stats')} onHistory={() => go('history')} />
           <div className="profile-share-setting">
             <div>
@@ -1118,6 +1389,16 @@ export function OwnProfileScreen({
               <span />
             </button>
           </div>
+          <Button
+            className="profile-blocked-link"
+            variant="ghost"
+            onClick={(event) => {
+              blockedProfilesTrigger.current = event.currentTarget;
+              setShowBlockedProfiles(true);
+            }}
+          >
+            Blocked profiles
+          </Button>
         </>
       )}
       {view === 'stats' && (
@@ -1237,6 +1518,14 @@ export function OwnProfileScreen({
         {status && <p role="status">{status}</p>}
         {error && <p role="alert">{error}</p>}
       </Sheet>
+      {showBlockedProfiles && (
+        <BlockedProfilesSheet
+          key={session.accountId}
+          accountId={session.accountId}
+          trigger={blockedProfilesTrigger.current}
+          onClose={() => setShowBlockedProfiles(false)}
+        />
+      )}
     </main>
   );
 }

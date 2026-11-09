@@ -1890,6 +1890,13 @@ summary {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.weekly-volume-chart {
+  gap: 4px;
+  padding-inline: 4px;
+}
+.weekly-volume-chart .chart-label {
+  white-space: nowrap;
+}
 .data-settings-page > .page-heading {
   flex-wrap: wrap;
   align-items: center;

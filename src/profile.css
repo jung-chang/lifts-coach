@@ -41,6 +41,27 @@
   margin: 22px 0 16px;
   font-size: 23px;
 }
+.profile-blocked-link {
+  margin-top: 12px;
+}
+.blocked-profiles-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.blocked-profiles-list li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+}
+.blocked-profiles-list li + li {
+  border-top: 1px solid var(--border);
+}
+.blocked-profiles-list li > span:nth-child(2) {
+  overflow-wrap: anywhere;
+}
 @media (max-width: 400px) {
   .profile-identity {
     gap: 6px;

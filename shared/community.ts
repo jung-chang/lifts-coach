@@ -26,6 +26,7 @@ export interface FeedItem {
   profile: PublicProfile;
   /** Workout completion instant, used by the feed for the viewer-local date and time. */
   activityAt: string;
+  trainingDate?: string;
   title: string;
   durationMinutes: number | null;
   exerciseCount: number;
@@ -37,6 +38,12 @@ export interface FeedPage {
   items: FeedItem[];
   nextCursor: string | null;
 }
+export interface CalendarWorkout {
+  id: string;
+  title: string;
+  trainingDate: string;
+}
+export type BlockedProfile = Pick<PublicProfile, 'publicId' | 'displayName'>;
 export interface SharedWorkout {
   id: string;
   /** Present only when the viewer owns the workout, for privacy controls. */

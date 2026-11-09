@@ -236,6 +236,9 @@ describe('CommunityScreen', () => {
     const mounted = render(<CommunityScreen {...props} session={session} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Alex Example' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Block profile' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Block profile' }),
+    );
     await waitFor(() => expect(resolveBlock).toBeTypeOf('function'));
     mounted.rerender(<CommunityScreen {...props} session={{ ...session, accountId: 'acct-b' }} />);
     await screen.findByText('New account workout');
@@ -277,14 +280,120 @@ describe('CommunityScreen', () => {
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Alex Example' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Block profile' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Block profile' }),
+    );
     await waitFor(() => expect(resolveBlock).toBeTypeOf('function'));
-    fireEvent.click(screen.getByRole('button', { name: 'Back to previous view' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back to previous view', hidden: true }));
     fireEvent.click(await screen.findByRole('button', { name: 'Sam Example' }));
     await screen.findByRole('heading', { name: 'Sam Example' });
     resolveBlock?.(jsonResponse({ ok: true }));
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(screen.getByRole('heading', { name: 'Sam Example' })).toBeTruthy();
     expect(screen.queryByText(/This profile is blocked/)).toBeNull();
+  });
+
+  it('waits for confirmation before blocking and lets the viewer unblock from the result', async () => {
+    let blocked = false;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url.endsWith('/blocked')) return jsonResponse({ items: blocked ? [profile] : [] });
+      if (url.endsWith('/block')) {
+        blocked = init?.method === 'POST';
+        return new Response(null, { status: 204 });
+      }
+      if (url.includes('/calendar?')) return jsonResponse({ items: [] });
+      return jsonResponse({
+        profile,
+        scope: 'shared-workouts',
+        weeks: [],
+        records: [],
+        workouts: [],
+      });
+    });
+    render(
+      <CommunityScreen
+        session={session}
+        unit="lb"
+        onSessionChange={() => {}}
+        onSettings={() => {}}
+        onCoach={() => {}}
+        initialProfileId={profile.publicId}
+      />,
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Block profile' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog', { name: 'Block Alex Example?' })).getByRole('button', {
+        name: 'Cancel',
+      }),
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/block'))).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Block profile' }));
+    fireEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Block profile' }),
+    );
+    await screen.findByText('This profile is blocked.');
+    expect(screen.queryByRole('region', { name: 'Workout calendar' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Blocked profiles' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Unblock Alex Example' }));
+    await screen.findByRole('heading', { name: 'Alex Example' });
+    expect(blocked).toBe(false);
+  });
+
+  it('shows shared workouts by training day and returns to the selected month after viewing one', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/calendar?'))
+        return jsonResponse({
+          items: url.endsWith('2026-09')
+            ? [
+                { id: 'pub-old', title: 'Earlier workout', trainingDate: '2026-09-29' },
+                { id: 'pub-other', title: 'Another workout', trainingDate: '2026-09-30' },
+              ]
+            : [],
+        });
+      if (url.endsWith('/workouts/pub-old'))
+        return jsonResponse({
+          id: 'pub-old',
+          profile,
+          title: 'Earlier workout',
+          startedAt: '2026-09-30T01:00:00Z',
+          completedAt: '2026-09-30T02:00:00Z',
+          exercises: [],
+        });
+      return jsonResponse({
+        profile,
+        scope: 'all-history',
+        weeks: [{ startDate: '2026-10-12', sets: 4 }],
+        records: [],
+        workouts: [feedItem],
+      });
+    });
+    render(
+      <CommunityScreen
+        session={session}
+        unit="lb"
+        onSessionChange={() => {}}
+        onSettings={() => {}}
+        onCoach={() => {}}
+        initialProfileId={profile.publicId}
+      />,
+    );
+    expect(
+      await screen.findByRole('img', { name: /Completed working sets per week/ }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }));
+    const day = await screen.findByRole('button', {
+      name: /September 29, 2026, 1 completed workout/,
+    });
+    fireEvent.click(day);
+    fireEvent.click(screen.getByRole('button', { name: 'Earlier workout' }));
+    await screen.findByRole('heading', { name: 'Earlier workout' });
+    fireEvent.click(screen.getByRole('button', { name: 'Back to previous view' }));
+    expect(await screen.findByRole('button', { name: 'Earlier workout' })).toBeTruthy();
+    expect(
+      screen.getByRole('button', { name: /September 29, 2026/ }).getAttribute('aria-pressed'),
+    ).toBe('true');
   });
 
   it('links a feed name to profile and the workout area to read-only expanded set detail', async () => {
