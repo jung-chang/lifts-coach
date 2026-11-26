@@ -933,6 +933,10 @@ app.get('/api/community/workouts/:publicationId', async (c) => {
       loadMode: s.loadMode,
     });
   }
+  const exerciseOrder = new Set([...(exerciseNames?.keys() ?? []), ...groups.keys()]);
+  const exercises = [...exerciseOrder]
+    .filter((key) => groups.has(key))
+    .map((key) => groups.get(key));
   const recordSetIds =
     personalRecords.revision === row.sourceRevision
       ? personalRecords.achievements
@@ -965,7 +969,7 @@ app.get('/api/community/workouts/:publicationId', async (c) => {
       'Workout',
     startedAt: row.startedAt,
     completedAt: row.completedAt,
-    exercises: [...groups.values()],
+    exercises,
   });
 });
 app.get('/api/me/workouts/:workoutId/visibility', async (c) => {

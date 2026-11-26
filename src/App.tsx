@@ -93,10 +93,11 @@ import {
 import { exerciseStatsFromWorkouts } from '../shared/trainingStats';
 import { personalRecordsFromWorkouts } from '../shared/personalRecords';
 import { WorkoutRecords } from './components/PersonalRecords';
-import type { AccountSession } from '../shared/community';
+import type { AccountSession, SharedWorkout } from '../shared/community';
 import { trainingDateAt } from '../shared/trainingDates';
 import './shell.css';
 import { addSampleRoutine } from './lib/sampleRoutine';
+import { createCommunityRoutineDraft } from './lib/communityRoutine';
 import {
   applyInspectedRoutineProposal,
   commitRoutineDraft,
@@ -168,6 +169,7 @@ function App() {
   const previousAccount = useRef<string | null>(null);
   const [modal, setModal] = useState('');
   const [editorDraft, setEditorDraft] = useState<RoutineDraft | null>(null);
+  const savingRoutine = useRef(false);
   const [editorVisible, setEditorVisible] = useState(false);
   const [editorName, setEditorName] = useState('');
   const [editorReturnTab, setEditorReturnTab] = useState<Tab>('train');
@@ -369,7 +371,7 @@ function App() {
       say((e as Error).message);
     }
   };
-  const closeEditor = () => {
+  const closeEditor = (destination = editorReturnTab) => {
     const consumeEditorEntry = window.history.state?.routineEditor;
     // Programmatic Save/discard exits must stop the dirty browser-Back guard
     // before history.back dispatches; effect cleanup can happen too late.
@@ -378,7 +380,7 @@ function App() {
     setEditorDraft(null);
     setEditorVisible(false);
     setDiscardRequested(false);
-    setTab(editorReturnTab);
+    setTab(destination);
     if (consumeEditorEntry) window.history.back();
   };
   const requestEditorExit = (resumeWorkout = false) => {
@@ -406,7 +408,7 @@ function App() {
     const unlisten = listenForRoutineEditorBack({
       isDirty: () => hasRoutineDraftChanges(editorDraft, editorName),
       onDiscardRequest: () => setDiscardRequested(true),
-      onCleanBack: closeEditor,
+      onCleanBack: () => closeEditor(),
     });
     editorBackCleanup.current = unlisten;
     return () => {
@@ -443,8 +445,22 @@ function App() {
     setModal('');
     if (!editorDraft) pushRoutineEditorHistory();
   };
-  const saveRoutine = () => {
-    if (!data || !editorDraft) return;
+  const useCommunityWorkout = (workout: SharedWorkout) => {
+    if (!data) return;
+    if (editorDraft && hasRoutineDraftChanges(editorDraft, editorName)) {
+      say('Save or discard your current draft before using this workout.');
+      return;
+    }
+    const draft = createCommunityRoutineDraft(workout, data);
+    setEditorDraft(draft);
+    setEditorName(draft.routine.name);
+    setEditorReturnTab('community');
+    setEditorVisible(true);
+    if (!editorDraft) pushRoutineEditorHistory();
+  };
+  const saveRoutine = async () => {
+    if (!data || !editorDraft || savingRoutine.current) return;
+    savingRoutine.current = true;
     try {
       if (editorDraft.proposalId) {
         const proposalId = editorDraft.proposalId;
@@ -453,7 +469,7 @@ function App() {
           name: editorName.trim(),
           updatedAt: new Date().toISOString(),
         };
-        void safeUpdate((d) => {
+        const ok = await safeUpdate((d) => {
           return applyInspectedRoutineProposal(
             d,
             proposalId,
@@ -463,22 +479,22 @@ function App() {
             editorDraft.exerciseSettings,
             editorDraft.sourceExerciseSettings,
           );
-        }).then((ok) => {
-          if (ok) {
-            closeEditor();
-            say('Routine draft reviewed and saved');
-          }
         });
+        if (ok) {
+          closeEditor();
+          say('Routine draft reviewed and saved');
+        }
       } else {
-        void safeUpdate((d) => commitRoutineDraft(d, editorDraft, editorName)).then((ok) => {
-          if (ok) {
-            closeEditor();
-            say('Routine saved');
-          }
-        });
+        const ok = await safeUpdate((d) => commitRoutineDraft(d, editorDraft, editorName));
+        if (ok) {
+          closeEditor(editorReturnTab === 'community' ? 'train' : editorReturnTab);
+          say('Routine saved');
+        }
       }
     } catch (e) {
       say((e as Error).message);
+    } finally {
+      savingRoutine.current = false;
     }
   };
   const openCoach = (ctx: typeof context = {}) => {
@@ -1216,6 +1232,7 @@ function App() {
               onSessionChange={onSessionChange}
               onSettings={openAccountSettings}
               onCoach={() => openCoach()}
+              onUseWorkout={useCommunityWorkout}
             />
           )}
           {tab === 'profile' && (

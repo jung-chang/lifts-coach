@@ -62,7 +62,17 @@ describe('CommunityScreen', () => {
         title: 'Upper body',
         startedAt: '2026-10-18T14:00:00Z',
         completedAt: feedItem.activityAt,
-        exercises: [],
+        exercises: [
+          {
+            id: 'shared-press',
+            exerciseId: 'ex_barbell-bench-press',
+            name: 'Bench press',
+            loadMode: 'external',
+            sets: [
+              { id: 'shared-set', weight: 95, reps: 8, kind: 'working', loadMode: 'external' },
+            ],
+          },
+        ],
       });
     });
     render(
@@ -72,11 +82,14 @@ describe('CommunityScreen', () => {
         onSessionChange={() => {}}
         onSettings={() => {}}
         onCoach={() => {}}
+        onUseWorkout={vi.fn()}
       />,
     );
     fireEvent.click(
       await screen.findByRole('button', { name: /View Upper body workout by My Name/ }),
     );
+    await screen.findByRole('heading', { name: 'Upper body' });
+    expect(screen.queryByRole('button', { name: 'Use workout' })).toBeNull();
     fireEvent.click(await screen.findByRole('button', { name: 'Make private' }));
     await waitFor(() => expect(screen.queryByRole('button', { name: 'Make private' })).toBeNull());
     await waitFor(() => expect(hidden).toBe(true));

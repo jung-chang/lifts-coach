@@ -1151,6 +1151,55 @@ describe('community backend authorization and publication', () => {
     expect((await call(db, disabledToken, '/api/session')).status).toBe(403);
   });
 
+  it('returns shared exercises in the original workout order', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json(jwks)),
+    );
+    const db = new TestD1();
+    const owner = await auth('ordered-owner@example.test', 'ordered-owner');
+    const member = await auth('ordered-viewer@example.test', 'ordered-viewer');
+    try {
+      const { accountId, sharing } = (await (await call(db, owner, '/api/session')).json()) as any;
+      const data = finishedData();
+      const workout = data.workouts[0];
+      workout.communityVisibility = {
+        visibility: 'community',
+        policyRevision: sharing.policyRevision,
+      };
+      const bench = workout.exercises[0];
+      workout.exercises.push({
+        ...bench,
+        id: 'earlier-alphabetically',
+        exerciseId: 'ex_back-squat',
+        name: 'Back squat',
+        actualSets: [{ ...bench.actualSets[0], id: 'squat-set' }],
+      });
+      expect(
+        (
+          await call(db, owner, '/api/state', 'PUT', {
+            accountId,
+            deviceId: 'ordered-device',
+            operationId: 'ordered-sync',
+            baseRevision: 0,
+            data,
+          })
+        ).status,
+      ).toBe(200);
+      const page = (await (await call(db, member, '/api/community/feed')).json()) as any;
+      expect(page.items).toHaveLength(1);
+      const detail = (await (
+        await call(db, member, `/api/community/workouts/${page.items[0].id}`)
+      ).json()) as any;
+      expect(detail.exercises.map((exercise: { id: string }) => exercise.id)).toEqual([
+        bench.id,
+        'earlier-alphabetically',
+      ]);
+    } finally {
+      db.db.close();
+    }
+  });
+
   it('publishes only synchronized completed workout fields, enforces blocks, and hides stale projections', async () => {
     vi.stubGlobal(
       'fetch',

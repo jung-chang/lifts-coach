@@ -56,6 +56,7 @@ type CommunityProps = {
   onSessionChange: (s: AccountSession) => void;
   onSettings: () => void;
   onCoach: () => void;
+  onUseWorkout?: (workout: SharedWorkout) => void;
   initialProfileId?: string;
 };
 type View =
@@ -205,7 +206,13 @@ function BlockedProfilesSheet({
   );
 }
 
-export function CommunityScreen({ session, unit, onSettings, initialProfileId }: CommunityProps) {
+export function CommunityScreen({
+  session,
+  unit,
+  onSettings,
+  onUseWorkout,
+  initialProfileId,
+}: CommunityProps) {
   const accountId = session?.accountId ?? '';
   const [view, setView] = useState<View>(
     initialProfileId ? { kind: 'profile', id: initialProfileId } : { kind: 'feed' },
@@ -746,6 +753,7 @@ export function CommunityScreen({ session, unit, onSettings, initialProfileId }:
               workout={workout}
               unit={unit}
               onProfile={() => go({ kind: 'profile', id: workout.profile.publicId })}
+              onUseWorkout={onUseWorkout}
             />
           )}
         </section>
@@ -1171,13 +1179,20 @@ function SharedWorkoutContent({
   onProfile,
   session,
   onPrivate,
+  onUseWorkout,
 }: {
   workout: SharedWorkout;
   unit: Unit;
   onProfile: () => void;
   session: AccountSession;
   onPrivate: () => void;
+  onUseWorkout?: (workout: SharedWorkout) => void;
 }) {
+  const isOwner = workout.profile.publicId === session.profile.publicId;
+  const canUse =
+    !isOwner &&
+    onUseWorkout &&
+    workout.exercises.some((exercise) => exercise.sets.some((set) => set.kind === 'working'));
   return (
     <div className="community-workout-detail">
       <WorkoutDetails
@@ -1192,6 +1207,13 @@ function SharedWorkoutContent({
         startedAt={workout.startedAt}
         completedAt={workout.completedAt}
         timeZone={workout.profile.trainingTimezone}
+        headerAction={
+          canUse && (
+            <Button variant="primary" onClick={() => onUseWorkout(workout)}>
+              Use workout
+            </Button>
+          )
+        }
         exercises={workout.exercises.map((exercise) => ({
           ...exercise,
           sets: exercise.sets.map((set) => ({
@@ -1201,7 +1223,7 @@ function SharedWorkoutContent({
         }))}
         unit={unit}
         footer={
-          workout.ownerWorkoutId && workout.profile.publicId === session.profile.publicId ? (
+          workout.ownerWorkoutId && isOwner ? (
             <MakeWorkoutPrivate
               key={`${session.accountId}:${workout.ownerWorkoutId}`}
               session={session}

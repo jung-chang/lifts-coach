@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { emptyData } from '../shared/domain';
+import { emptyData, startWorkout, validateBackup } from '../shared/domain';
 import App from '../src/App';
 
 const fixture = vi.hoisted(() => ({
@@ -69,6 +69,93 @@ function startDraft() {
 }
 
 describe('integrated editor navigation', () => {
+  it('saves another member’s workout as an independent, editable routine', async () => {
+    const profile = { publicId: 'synthetic-peer', displayName: 'Alex', trainingTimezone: 'UTC' };
+    const completedAt = '2026-10-18T15:00:00.000Z';
+    const workout = {
+      id: 'pub-example',
+      title: 'Upper body',
+      profile,
+      startedAt: '2026-10-18T14:00:00.000Z',
+      completedAt,
+      exercises: [
+        {
+          id: 'shared-bench',
+          exerciseId: 'ex_barbell-bench-press',
+          name: 'Barbell Bench Press',
+          loadMode: 'external',
+          sets: [
+            { id: 'warmup', kind: 'warmup', weight: 45, reps: 12, loadMode: 'external' },
+            { id: 'work-1', kind: 'working', weight: 95, reps: 8, loadMode: 'external' },
+            { id: 'work-2', kind: 'working', weight: 90, reps: 6, loadMode: 'external' },
+          ],
+        },
+        {
+          id: 'shared-pull',
+          exerciseId: 'custom-peer-pull',
+          name: 'Example assisted pull',
+          loadMode: 'assistance',
+          sets: [{ id: 'work-3', kind: 'working', weight: 25, reps: 5, loadMode: 'assistance' }],
+        },
+      ],
+    };
+    vi.mocked(fetch).mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.includes('/feed'))
+        return Response.json({
+          items: [
+            {
+              id: workout.id,
+              profile,
+              title: workout.title,
+              activityAt: completedAt,
+              exerciseCount: 2,
+              setCount: 3,
+              durationMinutes: 60,
+              exerciseNames: ['Barbell Bench Press', 'Example assisted pull'],
+            },
+          ],
+          nextCursor: null,
+        });
+      if (url.endsWith(workout.id)) return Response.json(workout);
+      return Response.json([]);
+    });
+
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Community' }));
+    fireEvent.click(await screen.findByRole('button', { name: /View Upper body workout by Alex/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Use workout' }));
+    expect(screen.getByLabelText('Routine name')).toHaveProperty('value', 'Upper body');
+    expect(fixture.update).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText('Routine name'), { target: { value: 'My upper body' } });
+    const save = screen.getByRole('button', { name: 'Save routine' });
+    fireEvent.click(save);
+    fireEvent.click(save);
+
+    await screen.findByRole('button', { name: 'Delete My upper body' });
+    const data = validateBackup(fixture.data);
+    expect(data.workouts).toEqual([]);
+    expect(data.routines).toHaveLength(1);
+    expect(data.exercises).toHaveLength(1);
+    const routine = data.routines[0];
+    expect(routine.exercises).toMatchObject([
+      { exerciseId: 'ex_barbell-bench-press', sets: 2, repRange: [6, 8], targetWeight: 95 },
+      {
+        exerciseId: data.exercises[0].id,
+        sets: 1,
+        repRange: [5, 5],
+        targetWeight: 25,
+        loadMode: 'assistance',
+      },
+    ]);
+    expect(data.exercises[0].id).not.toBe(workout.exercises[1].exerciseId);
+    expect(startWorkout(data, routine.id).workouts[0].exercises[1].actualSets[0]).toMatchObject({
+      kind: 'working',
+      status: 'incomplete',
+      loadMode: 'assistance',
+    });
+  });
+
   it('shows profile setup before training for a newly verified account', () => {
     fixture.session.profileSetupRequired = true;
     render(<App />);
